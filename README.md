@@ -1,0 +1,124 @@
+# Mentor Mother Digital Supervision Application
+
+Backend and infrastructure for the PMTCT supervision pilot.
+A joint project of IHVN and DataPharm Technologies Limited.
+
+## What this system is for
+
+An HIV exposed infant tests positive. The result reaches the facility. Weeks
+pass before anybody acts, because in a paper system nothing prompts a person
+until somebody reviews a register. By then the infant is not on treatment.
+
+This system removes that delay. It does one thing: it makes the interval
+between a result arriving and somebody acting on it visible, short and
+measurable.
+
+Everything else in the repository exists to serve that, or to keep the families
+in the programme safe while it happens.
+
+## Repository layout
+
+```
+infra/                    AWS CDK, TypeScript. Four stacks.
+  bin/mmdsa.ts            Entrypoint. Wires the stacks together.
+  config/environments.ts  Per-environment settings. Region af-south-1.
+  lib/network-stack.ts    VPC, subnets, security groups, VPC endpoints.
+  lib/data-stack.ts       PostgreSQL, Redis, KMS, S3, secrets.
+  lib/app-stack.ts        Cognito, EC2 Auto Scaling group, ALB, WAF.
+  lib/observability-stack.ts  Alarms and the dashboard.
+
+backend/                  Django 5.2 LTS, Django REST Framework.
+  config/                 Settings, URLs, Celery schedule.
+  apps/common/            Base models, encrypted fields, metrics.
+  apps/accounts/          Users, five-tier roles, row scoping.
+  apps/registry/          Geography, facilities, mentor mothers, clients, infants.
+  apps/visits/            Home visits, location verification, offline sync.
+  apps/eid/               Test appointments, samples, results, ART linkage.
+  apps/alerts/            The deterministic rule engine.
+  apps/messaging/         Termii gateway, privacy guard, reply parsing.
+  apps/audit/             The audit trail and the retention jobs.
+  tests/                  53 tests.
+```
+
+## Running it
+
+```bash
+# Infrastructure. Synthesise without deploying.
+cd infra
+npm install
+npx cdk synth --context env=pilot
+
+# Backend. SQLite is used for checks and tests only.
+cd backend
+python -m venv .venv && ./.venv/bin/pip install -r requirements-dev.txt
+USE_SQLITE=1 ./.venv/bin/python manage.py migrate
+USE_SQLITE=1 ./.venv/bin/python manage.py seed_programme
+USE_SQLITE=1 ./.venv/bin/python -m pytest tests/
+```
+
+Deploying to AWS needs the af-south-1 region enabled on the account. It is an
+opt-in region.
+
+## Four rules that shape the code
+
+**The Baby Code rule.** An SMS crosses a public network and then sits in plain
+text on a handset that other people in the household may use. A message that
+names a child and implies an HIV exposure can get that family harmed. So every
+outbound body identifies an infant by the Baby Code and by nothing else, and
+that is enforced in `apps/messaging/guards.py` on every message after
+rendering. It is not left to the care of whoever writes a template.
+
+**Split responsibility.** A supervisor enters clinical data. A mentor mother
+confirms an action. She is a peer supporter, not a clinician, and a shared write
+path would leave the audit trail unable to say who recorded a result. Enforced
+by `CanEnterClinicalData`, not only by the user interface.
+
+**The location verdict is computed on the server.** A check that runs on a
+handset can be defeated by that handset. The server holds the registered
+household point and decides. There are five verdicts, not two, because the
+target is 85 percent verified and honest failures exist: a wrong household
+point, a weak fix under a roof, a handset with a poor receiver. Only
+`OUT_OF_RANGE` raises a flag, and the alert wording asks the supervisor to check
+the household point rather than to accuse anybody.
+
+**Deny by default in the scoping layer.** A model not registered in
+`SCOPE_PATHS` returns no rows. A developer who adds a model and forgets to
+register it sees an empty list immediately. The opposite default would expose
+every patient at every site and no test would fail.
+
+## Decisions that need sign-off
+
+**The pilot geography is unresolved.** Two records exist: FCT, Benue and
+Nasarawa in one, Plateau and Ogun in another. No state name appears anywhere in
+the code, the migrations or the constants, so this costs nothing to settle late.
+It does block the seed fixture and the budget travel lines.
+
+**Django 5.2 LTS, not 4.2.** Annex B specifies 4.2 LTS, which left extended
+support in April 2026. 5.2 is supported to 2028, past the scale-up phase. The
+annex needs the correction.
+
+**ALB with WAF, not API Gateway.** Annex B lists API Gateway. This build uses an
+Application Load Balancer with an AWS WAF web ACL: same rate limiting and
+request filtering, no per-request charge on top of the balancer, one fewer hop.
+Recorded in the `AppStack` docstring rather than hidden.
+
+## What is not built
+
+- Serializers and viewsets for everything except the sync endpoints.
+- The Termii inbound webhook. `handle_inbound` exists and is tested; the HTTP
+  endpoint that calls it does not.
+- The React Native client and the React supervisor dashboard.
+- The geography fixture, which is blocked on the decision above.
+- A live Termii integration test. This is the largest remaining risk. The whole
+  causal chain assumes two-way SMS is reliable on the pilot networks, and that
+  assumption is currently untested against a real handset on a real carrier.
+
+## Before real patient data enters any environment
+
+- Set a TLS certificate ARN. Without one the listener is plain HTTP, and the
+  CDK emits a warning saying so.
+- Replace every `REPLACE_AFTER_DEPLOY` value in Secrets Manager. The pilot
+  settings module refuses to start while a placeholder remains.
+- Obtain the NHREC and state SHREC approvals described in Annex C. The consent
+  timestamp field exists; no code enforces that consent precedes enrolment yet,
+  and it should before go-live.

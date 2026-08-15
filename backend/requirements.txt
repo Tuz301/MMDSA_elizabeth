@@ -1,0 +1,15 @@
+# Mentor Mother Digital Supervision Application — backend runtime.
+Django==5.2.*
+djangorestframework==3.15.*
+django-filter==24.*
+djangorestframework-simplejwt==5.3.*
+psycopg[binary]==3.2.*
+celery==5.4.*
+redis==5.2.*
+django-celery-beat==2.7.*
+PyJWT[crypto]==2.9.*
+cryptography==43.*
+boto3==1.35.*
+gunicorn==23.*
+python-decouple==3.8
+drf-spectacular==0.27.*

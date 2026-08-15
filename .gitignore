@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.sqlite3
+
+# Node / CDK
+node_modules/
+cdk.out/
+*.js.map
+infra/**/*.d.ts
+infra/**/*.js
+!infra/jest.config.js
+
+# Secrets. Nothing resembling a credential belongs in this repository.
+.env
+.env.*
+*.pem
+*.key
+secrets.json
+
+# Local
+.DS_Store
+staticfiles/
+.pytest_cache/
