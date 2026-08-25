@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     # Third party.
     "rest_framework",
     "django_filters",
+    "drf_spectacular",
     # Local. Order matters: common defines the abstract base models.
     "apps.common",
     "apps.accounts",
@@ -128,17 +129,40 @@ REST_FRAMEWORK = {
         "django_filters.rest_framework.DjangoFilterBackend",
         "rest_framework.filters.OrderingFilter",
     ],
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
+    # StandardPagination caps the page size. The bare LimitOffsetPagination
+    # has no max_limit, which would let one request dump every patient row a
+    # scope allows.
+    "DEFAULT_PAGINATION_CLASS": "apps.common.pagination.StandardPagination",
     "PAGE_SIZE": 50,
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.ScopedRateThrottle",
+        # ScopedRateThrottle only limits a view that declares a scope, so
+        # every other endpoint gets a per-user ceiling from this one.
+        "rest_framework.throttling.UserRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
         "sync": "120/hour",
         "auth": "20/hour",
         "inbound_sms": "600/hour",
+        "user": "1000/hour",
     },
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DATETIME_FORMAT": "iso-8601",
+}
+
+# The API surface of a PMTCT registry is not public documentation: the schema
+# and its viewer require an authenticated, active health worker.
+SPECTACULAR_SETTINGS = {
+    "TITLE": "MMDSA API",
+    "DESCRIPTION": (
+        "Mentor Mother Digital Supervision Application. Identifier fields "
+        "are role-gated and absent from responses for roles that may not "
+        "read them; programme codes are always present."
+    ),
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SERVE_PERMISSIONS": ["apps.accounts.permissions.IsActiveHealthWorker"],
+    "SCHEMA_PATH_PREFIX": "/api/v1",
 }
 
 # ---------------------------------------------------------------------------
@@ -175,6 +199,10 @@ TERMII = {
     "MAX_RETRIES": 3,
     # Hard stop. The gateway refuses to send if the body fails the PHI check.
     "ENFORCE_PHI_GUARD": True,
+    # Signs inbound callbacks. When it is unset the webhook refuses every
+    # callback: a check that cannot run denies, exactly as the privacy guard
+    # does outbound.
+    "WEBHOOK_SECRET": os.environ.get("TERMII_WEBHOOK_SECRET", ""),
 }
 
 # ---------------------------------------------------------------------------

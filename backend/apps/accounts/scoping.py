@@ -72,7 +72,47 @@ SCOPE_PATHS: dict[str, dict[str, str | None]] = {
         "lga": "facility__lga_id",
         "state": "facility__lga__state_id",
     },
+    "registry.State": {
+        "facility": "lgas__facilities__id",
+        "lga": "lgas__id",
+        "state": "id",
+    },
+    "registry.LocalGovernmentArea": {
+        "facility": "facilities__id",
+        "lga": "id",
+        "state": "state_id",
+    },
+    "messaging.InboundMessage": {
+        # A reply with no matched mentor mother has a null path and drops out
+        # of every scoped list. An unattributed reply is reviewed by a system
+        # administrator, which is the right audience for it.
+        "facility": "mentor_mother__facility_id",
+        "lga": "mentor_mother__facility__lga_id",
+        "state": "mentor_mother__facility__lga__state_id",
+    },
+    "visits.GeospatialAnomaly": {
+        "facility": "mentor_mother__facility_id",
+        "lga": "mentor_mother__facility__lga_id",
+        "state": "mentor_mother__facility__lga__state_id",
+    },
+    "visits.SyncBatch": {
+        "facility": "user__facility_id",
+        "lga": "user__facility__lga_id",
+        "state": "user__facility__lga__state_id",
+    },
 }
+
+#: Models every authenticated active user may list in full. An entry here is
+#: reviewed like a permission change: only a model with no patient rows and no
+#: identifier columns qualifies. Every tier must be able to read the alert
+#: thresholds and the message templates to predict what the engine will do.
+UNSCOPED_CONFIGURATION_MODELS = frozenset(
+    {"alerts.AlertRule", "messaging.MessageTemplate"}
+)
+
+#: Labels whose scope paths cross a reverse relation, so a filter can match a
+#: row more than once. These querysets need distinct() after filtering.
+_REVERSE_JOIN_LABELS = frozenset({"registry.State", "registry.LocalGovernmentArea"})
 
 
 def scope_queryset(queryset: QuerySet, user: User) -> QuerySet:
@@ -85,6 +125,9 @@ def scope_queryset(queryset: QuerySet, user: User) -> QuerySet:
         return queryset
 
     label = queryset.model._meta.label
+    if label in UNSCOPED_CONFIGURATION_MODELS:
+        return queryset
+
     paths = SCOPE_PATHS.get(label)
     if paths is None:
         # Unregistered model. Deny by default. See the module docstring.
@@ -95,16 +138,42 @@ def scope_queryset(queryset: QuerySet, user: User) -> QuerySet:
 
     if role == Role.FACILITY_SUPERVISOR:
         path = paths["facility"]
-        return queryset.filter(**{path: user.facility_id}) if path else queryset.none()
-
-    if role == Role.LGA_COORDINATOR:
+        scoped = queryset.filter(**{path: user.facility_id}) if path else queryset.none()
+    elif role == Role.LGA_COORDINATOR:
         path = paths["lga"]
-        return queryset.filter(**{path: user.lga_id}) if path else queryset.none()
-
-    if role == Role.STATE_MANAGER:
+        scoped = queryset.filter(**{path: user.lga_id}) if path else queryset.none()
+    elif role == Role.STATE_MANAGER:
         path = paths["state"]
-        return queryset.filter(**{path: user.state_id}) if path else queryset.none()
+        scoped = queryset.filter(**{path: user.state_id}) if path else queryset.none()
+    else:
+        return queryset.none()
 
+    if label in _REVERSE_JOIN_LABELS:
+        scoped = scoped.distinct()
+    return scoped
+
+
+def scope_user_queryset(queryset: QuerySet, user: User) -> QuerySet:
+    """
+    Scope the user table itself.
+
+    A user row carries exactly one of facility, LGA or state, so a state
+    manager's view of the accounts under them is an OR that SCOPE_PATHS cannot
+    express. Only the user-admin roles reach the endpoints that call this;
+    every other role gets nothing.
+    """
+    if not user.is_authenticated or not user.is_active_account:
+        return queryset.none()
+
+    role = Role(user.role)
+    if role == Role.SYSTEM_ADMIN:
+        return queryset
+    if role == Role.STATE_MANAGER:
+        return queryset.filter(
+            Q(state_id=user.state_id)
+            | Q(lga__state_id=user.state_id)
+            | Q(facility__lga__state_id=user.state_id)
+        )
     return queryset.none()
 
 
@@ -132,6 +201,13 @@ def _scope_to_mentor_mother(
         "alerts.Alert": Q(assigned_mentor_mother_id=profile.id),
         "registry.MentorMother": Q(id=profile.id),
         "registry.Facility": Q(id=profile.facility_id),
+        "registry.LocalGovernmentArea": Q(facilities__id=profile.facility_id),
+        "registry.State": Q(lgas__facilities__id=profile.facility_id),
     }
     condition = own_client_paths.get(label)
-    return queryset.filter(condition) if condition is not None else queryset.none()
+    if condition is None:
+        return queryset.none()
+    scoped = queryset.filter(condition)
+    if label in _REVERSE_JOIN_LABELS:
+        scoped = scoped.distinct()
+    return scoped

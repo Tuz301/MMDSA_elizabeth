@@ -18,7 +18,6 @@ misconduct.
 from __future__ import annotations
 
 import math
-from decimal import Decimal
 
 from django.conf import settings
 from django.db import models

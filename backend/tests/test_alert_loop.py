@@ -165,7 +165,6 @@ class TestAlertDeduplication:
 @pytest.mark.django_db
 class TestAlertDeadlines:
     def test_the_deadline_comes_from_the_severity(self, programme_settings, facility):
-        from apps.alerts.models import Alert
 
         alert = _alert(facility, severity="CRITICAL")
         elapsed = (alert.acknowledge_by - alert.raised_at).total_seconds() / 3600

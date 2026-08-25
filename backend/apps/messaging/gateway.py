@@ -21,7 +21,7 @@ from typing import Any
 from django.conf import settings
 from django.utils import timezone
 
-from .guards import PhiGuardError, check_outbound_body, redact_for_log
+from .guards import check_outbound_body, redact_for_log
 from .models import DeliveryReport, InboundMessage, OutboundMessage
 
 logger = logging.getLogger(__name__)
@@ -220,7 +220,19 @@ def handle_inbound(msisdn: str, raw_body: str, provider_message_id: str = "") ->
     mentor mother without a smartphone closes the loop.
     """
     from apps.alerts.models import Alert
-    from apps.registry.models import Infant, MentorMother
+    from apps.registry.models import MentorMother
+
+    # A replayed callback is answered with the row the first delivery created.
+    # Termii retries a callback it thinks failed, and acknowledging the same
+    # alert twice would misstate when the mentor mother acted. The guard
+    # triggers only on a non-empty identifier: a caller with no provider id
+    # (a test, a manual replay tool) keeps the old behaviour.
+    if provider_message_id:
+        existing = InboundMessage.objects.filter(
+            provider_message_id=provider_message_id
+        ).first()
+        if existing is not None:
+            return existing
 
     keyword, code = parse_reply(raw_body)
 
@@ -301,6 +313,51 @@ def reconcile() -> dict:
     ).update(status=OutboundMessage.Status.EXPIRED, updated_at=timezone.now())
 
     return {"reports_applied": applied, "messages_expired": expired}
+
+
+#: Callback payload keys that carry personal data. The telephone number is
+#: held encrypted on the message row and nowhere else, and the rendered body
+#: is deliberately not stored at all. Persisting a raw payload copy would
+#: quietly undo both decisions.
+_PAYLOAD_KEYS_DROPPED = {"receiver", "sender", "message", "sms", "text", "to", "from"}
+
+
+def _scrub_payload(payload: dict) -> dict:
+    """Keep the operational fields of a callback and drop the personal ones."""
+    return {k: v for k, v in payload.items() if k not in _PAYLOAD_KEYS_DROPPED}
+
+
+def handle_delivery_report(
+    provider_message_id: str, provider_status: str, payload: dict
+) -> DeliveryReport:
+    """
+    Record a delivery notification and apply it if the message is known.
+
+    A report that names no known message is kept as an orphan; the scheduled
+    reconcile() pass attaches it later, because Termii can report delivery
+    before the send response has been committed on our side.
+
+    Deduplication is on the (message id, status) pair, not the id alone:
+    Termii legitimately sends several reports for one message as it moves
+    through statuses, and the DeliveryReport docstring promises that every
+    callback is kept. Only a byte-identical repeat is collapsed.
+    """
+    report, created = DeliveryReport.objects.get_or_create(
+        provider_message_id=provider_message_id[:80],
+        provider_status=provider_status[:40],
+        defaults={"provider_payload": _scrub_payload(payload)},
+    )
+    if not created:
+        return report
+
+    message = OutboundMessage.objects.filter(
+        provider_message_id=provider_message_id[:80]
+    ).first()
+    if message is not None:
+        report.message = message
+        report.save(update_fields=["message"])
+        _apply_status(message, provider_status)
+    return report
 
 
 def _apply_status(message: OutboundMessage, provider_status: str) -> None:

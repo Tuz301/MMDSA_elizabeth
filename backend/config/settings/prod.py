@@ -30,6 +30,7 @@ _REQUIRED = {
     "FIELD_ENCRYPTION_KEY": DATA_PROTECTION["FIELD_ENCRYPTION_KEY"],  # noqa: F405
     "COGNITO_USER_POOL_ID": COGNITO["USER_POOL_ID"],  # noqa: F405
     "TERMII_API_KEY": TERMII["API_KEY"],  # noqa: F405
+    "TERMII_WEBHOOK_SECRET": TERMII["WEBHOOK_SECRET"],  # noqa: F405
     "DB_PASSWORD": DATABASES["default"]["PASSWORD"],  # noqa: F405
 }
 _missing = [k for k, v in _REQUIRED.items() if not v or "insecure" in str(v)]
