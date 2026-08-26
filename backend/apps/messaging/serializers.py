@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from apps.common.serializers import IdentifierGatedSerializerMixin
+
 from .guards import check_template_placeholders
 from .models import InboundMessage, MessageTemplate, OutboundMessage
 
@@ -50,7 +52,13 @@ class OutboundMessageDetailSerializer(OutboundMessageSerializer):
         read_only_fields = fields
 
 
-class InboundMessageSerializer(serializers.ModelSerializer):
+class InboundMessageSerializer(IdentifierGatedSerializerMixin, serializers.ModelSerializer):
+    # raw_body is stored in clear under the documented justification that a
+    # reply is a keyword and a code — but a real person can type anything,
+    # including a name. The parsed fields carry everything the wider tiers
+    # need; the raw text stays with the roles that may read identifiers.
+    identifier_fields = ("raw_body",)
+
     mentor_mother = serializers.SlugRelatedField(
         slug_field="staff_code", read_only=True
     )
@@ -58,9 +66,6 @@ class InboundMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = InboundMessage
         fields = [
-            # raw_body is held in clear by design: a reply is a keyword and a
-            # code, and no message sent by this system ever invites a person
-            # to type an identifier.
             "id", "received_at", "raw_body", "parse_status",
             "parsed_keyword", "parsed_code", "matched_message",
             "matched_alert", "mentor_mother", "action_taken", "created_at",

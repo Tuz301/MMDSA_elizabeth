@@ -14,8 +14,10 @@ from .models import GeospatialAnomaly, HomeVisit, SyncBatch
 class HomeVisitSerializer(IdentifierGatedSerializerMixin, serializers.ModelSerializer):
     # The reported position locates a household as surely as an address does,
     # so it is gated with the identifiers. The verdict and the distance are
-    # not: they say how far a reading was, not where it was.
-    identifier_fields = ("latitude", "longitude")
+    # not: they say how far a reading was, not where it was. Notes are gated
+    # too: they are free text typed in the field, and free text cannot be
+    # guaranteed not to carry a name.
+    identifier_fields = ("latitude", "longitude", "notes")
 
     client = serializers.SlugRelatedField(slug_field="client_code", read_only=True)
     infant = serializers.SlugRelatedField(slug_field="baby_code", read_only=True)

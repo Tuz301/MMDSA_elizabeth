@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -24,6 +25,7 @@ class MeView(APIView):
 
     permission_classes = [IsActiveHealthWorker]
 
+    @extend_schema(responses=MeSerializer)
     def get(self, request):
         request.user.touch()
         return Response(MeSerializer(request.user).data)
@@ -50,6 +52,7 @@ class UserViewSet(viewsets.ModelViewSet):
             self.request.user,
         )
 
+    @extend_schema(request=DisableUserSerializer, responses=UserSerializer)
     @action(detail=True, methods=["post"])
     def disable(self, request, pk=None):
         serializer = DisableUserSerializer(data=request.data)
@@ -58,6 +61,7 @@ class UserViewSet(viewsets.ModelViewSet):
         user.disable(serializer.validated_data["reason"])
         return Response(UserSerializer(user, context={"request": request}).data)
 
+    @extend_schema(request=None, responses=UserSerializer)
     @action(detail=True, methods=["post"])
     def enable(self, request, pk=None):
         user = self.get_object()

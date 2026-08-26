@@ -37,7 +37,7 @@ backend/                  Django 5.2 LTS, Django REST Framework.
   apps/alerts/            The deterministic rule engine.
   apps/messaging/         Termii gateway, privacy guard, reply parsing.
   apps/audit/             The audit trail and the retention jobs.
-  tests/                  53 tests.
+  tests/                  The test suite.
 ```
 
 ## Running it
@@ -102,11 +102,18 @@ Application Load Balancer with an AWS WAF web ACL: same rate limiting and
 request filtering, no per-request charge on top of the balancer, one fewer hop.
 Recorded in the `AppStack` docstring rather than hidden.
 
+## The API
+
+The REST API lives under `/api/v1/`, with an authenticated OpenAPI viewer at
+`/api/v1/schema/docs/`. Every list passes the scoping layer; identifier fields
+are absent from responses for roles that may not read them; state changes are
+POST actions, never PATCHes of status fields. The evaluation summary is at
+`/api/v1/metrics/summary/`. The Termii callback endpoint is
+`/api/v1/messaging/webhooks/termii/`: it verifies an HMAC-SHA512 signature
+over the raw body and refuses every callback until the webhook secret is set.
+
 ## What is not built
 
-- Serializers and viewsets for everything except the sync endpoints.
-- The Termii inbound webhook. `handle_inbound` exists and is tested; the HTTP
-  endpoint that calls it does not.
 - The React Native client and the React supervisor dashboard.
 - The geography fixture, which is blocked on the decision above.
 - A live Termii integration test. This is the largest remaining risk. The whole
@@ -117,6 +124,8 @@ Recorded in the `AppStack` docstring rather than hidden.
 
 - Set a TLS certificate ARN. Without one the listener is plain HTTP, and the
   CDK emits a warning saying so.
+- Set `TERMII_WEBHOOK_SECRET`. The pilot settings refuse to start without it,
+  and the webhook refuses every callback while it is unset.
 - Replace every `REPLACE_AFTER_DEPLOY` value in Secrets Manager. The pilot
   settings module refuses to start while a placeholder remains.
 - Obtain the NHREC and state SHREC approvals described in Annex C. The consent

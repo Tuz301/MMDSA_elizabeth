@@ -7,7 +7,19 @@ from rest_framework import serializers
 from apps.common.serializers import ScopedPrimaryKeyRelatedField
 from apps.registry.models import Facility, LocalGovernmentArea, State
 
-from .models import User
+from .models import Role, User
+
+#: The tiers of the access matrix, for comparing two roles. A user
+#: administrator may create or promote only below their own tier; otherwise a
+#: state manager could mint a system administrator bound to a Cognito subject
+#: they control, and the scope model would mean nothing.
+ROLE_TIER = {
+    Role.MENTOR_MOTHER: 0,
+    Role.FACILITY_SUPERVISOR: 1,
+    Role.LGA_COORDINATOR: 2,
+    Role.STATE_MANAGER: 3,
+    Role.SYSTEM_ADMIN: 4,
+}
 
 
 class ScopeReferenceSerializer(serializers.Serializer):
@@ -85,25 +97,48 @@ class UserSerializer(serializers.ModelSerializer):
             "disabled_at", "disabled_reason", "date_joined",
         ]
 
+    def validate_role(self, value):
+        """
+        A user administrator creates or promotes only below their own tier.
+
+        scope_user_queryset limits what a state manager can see; this limits
+        what they can make. Without it, visibility scoping is decoration.
+        """
+        request = self.context.get("request")
+        requester = getattr(request, "user", None)
+        if requester is None or not requester.is_authenticated:
+            raise serializers.ValidationError("No requester on record.")
+        if Role(requester.role) == Role.SYSTEM_ADMIN:
+            return value
+        if ROLE_TIER[Role(value)] >= ROLE_TIER[Role(requester.role)]:
+            raise serializers.ValidationError(
+                "You may only assign a role below your own."
+            )
+        return value
+
     def validate(self, attrs):
         """
         Run the model's own clean() so the role and scope consistency rule
         (a supervisor must have a facility, an administrator must have no
         scope) holds on the API path, not only in the admin.
+
+        The check runs on a throwaway candidate, never on self.instance: a
+        mutated instance would keep its half-applied values in memory when a
+        later validation step fails.
         """
-        candidate = self.instance if self.instance is not None else User()
-        original = {
-            name: getattr(candidate, name)
-            for name in ("role", "facility", "lga", "state")
-        }
-        try:
-            for name, value in attrs.items():
-                if hasattr(candidate, name):
-                    setattr(candidate, name, value)
-            candidate.clean()
-        finally:
-            for name, value in original.items():
-                setattr(candidate, name, value)
+        def current(name, default=None):
+            if name in attrs:
+                return attrs[name]
+            return getattr(self.instance, name, default) if self.instance else default
+
+        candidate = User(
+            username=current("username", ""),
+            role=current("role", Role.FACILITY_SUPERVISOR),
+        )
+        candidate.facility = current("facility")
+        candidate.lga = current("lga")
+        candidate.state = current("state")
+        candidate.clean()
         return attrs
 
 

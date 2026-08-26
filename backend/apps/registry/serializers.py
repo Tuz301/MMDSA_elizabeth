@@ -185,11 +185,25 @@ class InfantSerializer(IdentifierGatedSerializerMixin, serializers.ModelSerializ
 
     def validate(self, attrs):
         mother = attrs.get("mother", self.instance.mother if self.instance else None)
+        facility = attrs.get(
+            "facility", self.instance.facility if self.instance else None
+        )
         if self.instance is None and mother is not None and not mother.has_valid_consent:
             raise serializers.ValidationError(
                 {"mother": (
                     "The mother's consent is not on record, so an infant "
                     "cannot be registered under her."
+                )}
+            )
+        if (
+            mother is not None
+            and facility is not None
+            and mother.facility_id != facility.id
+        ):
+            raise serializers.ValidationError(
+                {"facility": (
+                    "The infant's facility must match the mother's. A "
+                    "transfer is recorded on the mother's record first."
                 )}
             )
         return attrs

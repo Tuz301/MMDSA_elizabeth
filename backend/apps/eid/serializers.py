@@ -110,6 +110,18 @@ class EidSampleSerializer(serializers.ModelSerializer):
                 {"dispatched_on": "A sample cannot be dispatched before it is collected."}
             )
 
+        if self.instance is not None:
+            # A result-bearing clinical record cannot migrate to another
+            # appointment or infant. The relation is fixed at creation.
+            new_appointment = attrs.get("appointment")
+            if (
+                new_appointment is not None
+                and new_appointment.pk != self.instance.appointment_id
+            ):
+                raise serializers.ValidationError(
+                    {"appointment": "This field is fixed once the sample exists."}
+                )
+
         if self.instance is None:
             appointment = attrs["appointment"]
             if appointment.status not in {
@@ -194,6 +206,35 @@ class ArtLinkageSerializer(serializers.ModelSerializer):
         barrier_note = attrs.get(
             "barrier_note", instance.barrier_note if instance else ""
         )
+
+        if instance is None and infant is not None:
+            # The OneToOne constraint would refuse this anyway, but at the
+            # database layer, which surfaces as a 500. The check belongs here,
+            # where it becomes a 400 the client can act on.
+            if ArtLinkage.objects.filter(infant=infant).exists():
+                raise serializers.ValidationError(
+                    {"infant": "This infant already has a linkage record."}
+                )
+
+        if (
+            instance is not None
+            and instance.status == ArtLinkage.Status.STARTED
+            and linkage_status
+            not in {
+                ArtLinkage.Status.STARTED,
+                ArtLinkage.Status.TRANSFERRED,
+                ArtLinkage.Status.DECEASED,
+            }
+        ):
+            # Treatment that has started can progress (transfer, death) but
+            # not un-happen. Undoing a recorded start is an administrative
+            # correction with its own audit trail, not a PATCH.
+            raise serializers.ValidationError(
+                {"status": (
+                    "A started linkage cannot move back to an earlier state "
+                    "through the API."
+                )}
+            )
 
         if instance is not None:
             # The linkage's identity is fixed at creation. Re-pointing it at

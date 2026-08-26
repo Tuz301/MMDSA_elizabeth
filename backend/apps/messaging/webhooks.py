@@ -32,6 +32,7 @@ import json
 import logging
 
 from django.conf import settings
+from drf_spectacular.utils import extend_schema
 from rest_framework.decorators import (
     api_view,
     authentication_classes,
@@ -40,12 +41,13 @@ from rest_framework.decorators import (
 )
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.throttling import SimpleRateThrottle
 
 from apps.audit.models import AuditAction, DataClassification
 from apps.audit.services import record as audit_record
 
 from .gateway import handle_delivery_report, handle_inbound
+from .models import InboundMessage
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +73,28 @@ def _signature_is_valid(request) -> bool:
     return hmac.compare_digest(supplied, expected)
 
 
-class TermiiWebhookThrottle(ScopedRateThrottle):
+class TermiiWebhookThrottle(SimpleRateThrottle):
+    """
+    Rate limit for the callback endpoint, keyed by source address.
+
+    SimpleRateThrottle, not ScopedRateThrottle: the scoped throttle reads its
+    scope from a view attribute that a function view does not carry, so a
+    ScopedRateThrottle subclass here would silently apply no limit at all to
+    the one unauthenticated write path in the system.
+    """
+
     scope = "inbound_sms"
 
+    def get_cache_key(self, request, view) -> str:
+        return self.cache_format % {
+            "scope": self.scope,
+            "ident": self.get_ident(request),
+        }
 
+
+# The consumer of this endpoint is Termii, not the client applications,
+# so it stays out of the published schema.
+@extend_schema(exclude=True)
 @api_view(["POST"])
 @authentication_classes([])
 @permission_classes([AllowAny])
@@ -115,12 +135,19 @@ def termii_webhook(request):
             logger.warning("An inbound callback carried no sender or no text.")
             return Response(_IGNORED)
 
+        # A replayed callback returns the row the first delivery created, and
+        # the first delivery already wrote the audit record. Auditing again
+        # would count one acknowledgement twice.
+        is_replay = bool(provider_message_id) and InboundMessage.objects.filter(
+            provider_message_id=provider_message_id[:80]
+        ).exists()
+
         inbound = handle_inbound(
             msisdn=msisdn,
             raw_body=raw_body,
             provider_message_id=provider_message_id[:80],
         )
-        if inbound.matched_alert_id and inbound.action_taken:
+        if not is_replay and inbound.matched_alert_id and inbound.action_taken:
             # The one programme-significant mutation an unauthenticated actor
             # can perform, so it goes in the audit trail. Field names and the
             # Baby Code only — never the reply text, never the number.

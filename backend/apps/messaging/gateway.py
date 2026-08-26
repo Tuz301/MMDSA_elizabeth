@@ -120,7 +120,7 @@ def dispatch(message_id: str, task=None) -> dict:
 
     message.status = OutboundMessage.Status.SENT
     message.sent_at = timezone.now()
-    message.provider_message_id = response.get("message_id", "")
+    message.provider_message_id = str(response.get("message_id", ""))[:80]
     message.provider_status_detail = str(response.get("message", ""))[:200]
     message.save(
         update_fields=[
@@ -251,9 +251,14 @@ def handle_inbound(msisdn: str, raw_body: str, provider_message_id: str = "") ->
 
     # A telephone number is encrypted, so it cannot be matched with a database
     # filter. Match on the most recent message sent to this number instead.
+    # sent_at must be non-null: a queued or blocked message was never sent,
+    # so no reply can belong to it — and on Postgres, descending order puts
+    # null sent_at rows first, where they would fill the whole window.
     recent = (
         OutboundMessage.objects.filter(
-            expects_reply=True, reply_received_at__isnull=True
+            expects_reply=True,
+            reply_received_at__isnull=True,
+            sent_at__isnull=False,
         )
         .order_by("-sent_at")[:200]
     )

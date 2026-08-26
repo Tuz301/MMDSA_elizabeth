@@ -13,6 +13,7 @@ from __future__ import annotations
 import django_filters
 from django.db.models import Case, IntegerField, When
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -83,6 +84,7 @@ class AlertViewSet(ScopedReadOnlyModelViewSet):
             return [IsActiveHealthWorker(), CanEnterClinicalData()]
         return [IsActiveHealthWorker()]
 
+    @extend_schema(request=None, responses=AlertSerializer)
     @action(detail=True, methods=["post"])
     def acknowledge(self, request, pk=None):
         alert = self.get_object()
@@ -91,6 +93,7 @@ class AlertViewSet(ScopedReadOnlyModelViewSet):
         # either way lets a stale client converge on the true state.
         return Response(self.get_serializer(alert).data)
 
+    @extend_schema(request=AlertResolveSerializer, responses=AlertSerializer)
     @action(detail=True, methods=["post"])
     def resolve(self, request, pk=None):
         serializer = AlertResolveSerializer(data=request.data)
@@ -113,6 +116,7 @@ class AlertViewSet(ScopedReadOnlyModelViewSet):
         alert.resolve(note=serializer.validated_data["note"])
         return Response(self.get_serializer(alert).data)
 
+    @extend_schema(responses=AlertSerializer(many=True))
     @action(detail=False, methods=["get"])
     def mine(self, request):
         """The caller's own open work: assigned alerts for a mentor mother,

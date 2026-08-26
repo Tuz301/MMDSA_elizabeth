@@ -161,6 +161,17 @@ SPECTACULAR_SETTINGS = {
     ),
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    # Several models share a bare "status" field name; without explicit names
+    # the generator invents collision suffixes that change between runs.
+    "ENUM_NAME_OVERRIDES": {
+        "AlertStatusEnum": "apps.alerts.models.Alert.Status",
+        "EidAppointmentStatusEnum": "apps.eid.models.EidAppointment.Status",
+        "ArtLinkageStatusEnum": "apps.eid.models.ArtLinkage.Status",
+        "OutboundMessageStatusEnum": "apps.messaging.models.OutboundMessage.Status",
+        "SyncBatchStatusEnum": "apps.visits.models.SyncBatch.Status",
+        "MentorMotherStatusEnum": "apps.registry.models.MentorMother.Status",
+        "ClientStatusEnum": "apps.registry.models.Client.Status",
+    },
     "SERVE_PERMISSIONS": ["apps.accounts.permissions.IsActiveHealthWorker"],
     "SCHEMA_PATH_PREFIX": "/api/v1",
 }

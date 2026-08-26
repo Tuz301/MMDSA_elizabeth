@@ -10,6 +10,7 @@ writable by anybody.
 from __future__ import annotations
 
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -38,6 +39,7 @@ class HomeVisitViewSet(ScopedReadOnlyModelViewSet):
     ]
     ordering_fields = ["visit_date"]
 
+    @extend_schema(request=VisitReviewSerializer, responses=HomeVisitSerializer)
     @action(
         detail=True,
         methods=["post"],
@@ -69,6 +71,7 @@ class GeospatialAnomalyViewSet(ScopedReadOnlyModelViewSet):
     filterset_fields = ["mentor_mother", "kind", "disposition", "confidence"]
     ordering_fields = ["detected_for_date"]
 
+    @extend_schema(request=AnomalyDispositionSerializer, responses=GeospatialAnomalySerializer)
     @action(
         detail=True,
         methods=["post"],

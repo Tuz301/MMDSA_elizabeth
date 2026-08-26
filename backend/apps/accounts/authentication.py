@@ -92,3 +92,24 @@ class CognitoJWTAuthentication(authentication.BaseAuthentication):
 
     def authenticate_header(self, request):
         return self.keyword
+
+
+# Declares the bearer scheme in the OpenAPI schema. Without it,
+# drf-spectacular cannot see how the API is authenticated and publishes a
+# schema with no security scheme at all.
+try:  # pragma: no cover - import guard for environments without spectacular
+    from drf_spectacular.extensions import OpenApiAuthenticationExtension
+
+    class CognitoJWTScheme(OpenApiAuthenticationExtension):
+        target_class = "apps.accounts.authentication.CognitoJWTAuthentication"
+        name = "cognitoJwt"
+
+        def get_security_definition(self, auto_schema):
+            return {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",
+                "description": "An AWS Cognito access token.",
+            }
+except ImportError:  # pragma: no cover
+    pass

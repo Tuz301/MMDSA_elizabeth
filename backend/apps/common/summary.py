@@ -19,6 +19,8 @@ from datetime import timedelta
 from django.conf import settings
 from django.db.models import Count
 from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
@@ -40,6 +42,13 @@ def _median(values: list[float]) -> float | None:
     return round((ordered[mid - 1] + ordered[mid]) / 2, 1)
 
 
+@extend_schema(
+    parameters=[
+        OpenApiParameter("date_from", OpenApiTypes.DATE),
+        OpenApiParameter("date_to", OpenApiTypes.DATE),
+    ],
+    responses=OpenApiTypes.OBJECT,
+)
 @api_view(["GET"])
 @permission_classes([IsActiveHealthWorker])
 def metrics_summary(request):
@@ -50,9 +59,18 @@ def metrics_summary(request):
     now-number and ignores the window: an old unacknowledged positive is more
     urgent, not less.
     """
+    from rest_framework import serializers as drf_serializers
+
+    class WindowSerializer(drf_serializers.Serializer):
+        date_from = drf_serializers.DateField(required=False)
+        date_to = drf_serializers.DateField(required=False)
+
+    window = WindowSerializer(data=request.query_params.dict())
+    window.is_valid(raise_exception=True)
+
     today = timezone.localdate()
-    date_from = request.query_params.get("date_from") or str(today - timedelta(days=90))
-    date_to = request.query_params.get("date_to") or str(today)
+    date_from = window.validated_data.get("date_from") or today - timedelta(days=90)
+    date_to = window.validated_data.get("date_to") or today
     user = request.user
 
     samples = scope_queryset(EidSample.objects.all(), user)
@@ -93,11 +111,13 @@ def metrics_summary(request):
     # issued in the window that has had the full target period to link,
     # including refusals and pending rows. Excluding them would flatter the
     # intervention.
+    # Strictly before the cutoff: a result issued exactly the target number
+    # of days ago can still link today, so it has not yet had the full window.
     cohort_cutoff = today - timedelta(days=linkage_target_days)
     cohort = linkages.filter(
         triggering_sample__result_issued_on__isnull=False,
         triggering_sample__result_issued_on__range=(date_from, date_to),
-        triggering_sample__result_issued_on__lte=cohort_cutoff,
+        triggering_sample__result_issued_on__lt=cohort_cutoff,
     )
     cohort_total = cohort.count()
     cohort_linked = sum(

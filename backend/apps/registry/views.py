@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from django.db import transaction
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -86,6 +87,7 @@ class InfantViewSet(ScopedModelViewSet):
             infant = serializer.save()
             EidAppointment.build_schedule(infant)
 
+    @extend_schema(request=InfantOutcomeSerializer, responses=InfantSerializer)
     @action(detail=True, methods=["post"])
     def outcome(self, request, pk=None):
         """

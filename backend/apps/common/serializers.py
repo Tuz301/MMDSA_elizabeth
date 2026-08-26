@@ -55,6 +55,31 @@ class IdentifierGatedSerializerMixin:
                 fields.pop(name, None)
         return fields
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if (
+            user is not None
+            and getattr(user, "is_authenticated", False)
+            and getattr(user, "may_read_identifiers", False)
+            and getattr(instance, "pk", None) is not None
+        ):
+            revealed = [
+                name
+                for name in self.identifier_fields
+                if name in data and data[name] not in (None, "")
+            ]
+            if revealed:
+                # The record that makes an inappropriate access visible during
+                # a review. Field names only, never values, per the audit
+                # module's own rule. One row per record read is the cost of
+                # being able to answer "who looked at this family's details".
+                from apps.audit.services import record_identifier_read
+
+                record_identifier_read(instance, revealed, reference=str(instance))
+        return data
+
 
 class ScopedPrimaryKeyRelatedField(serializers.PrimaryKeyRelatedField):
     """A related field whose candidate queryset is scoped to the requester."""

@@ -225,6 +225,11 @@ class Alert(BaseModel):
     def acknowledge(self, *, user=None, channel: str = "APP") -> None:
         if self.status in {self.Status.RESOLVED, self.Status.CANCELLED}:
             return
+        # Write-once. The acknowledgement timestamp is the SLA and relay
+        # measurement, and a second tap — or an SMS reply arriving after an
+        # in-app acknowledgement — must not rewrite it.
+        if self.acknowledged_at is not None:
+            return
         self.status = self.Status.ACKNOWLEDGED
         self.acknowledged_at = timezone.now()
         self.acknowledged_by = user

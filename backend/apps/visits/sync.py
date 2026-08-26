@@ -29,6 +29,8 @@ from django.utils import timezone
 from rest_framework import serializers, status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.response import Response
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework.throttling import ScopedRateThrottle
 
 from apps.accounts.permissions import IsActiveHealthWorker
@@ -109,6 +111,11 @@ class HomeVisitPullSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+@extend_schema(
+    request=OpenApiTypes.OBJECT,
+    responses=OpenApiTypes.OBJECT,
+    description="Batch upload of handset records. See the module docstring.",
+)
 @api_view(["POST"])
 @permission_classes([IsActiveHealthWorker])
 @throttle_classes([ScopedRateThrottle])
@@ -243,6 +250,10 @@ def push(request):
     )
 
 
+@extend_schema(
+    responses=OpenApiTypes.OBJECT,
+    description="Scoped download of current records for the handset.",
+)
 @api_view(["GET"])
 @permission_classes([IsActiveHealthWorker])
 @throttle_classes([ScopedRateThrottle])

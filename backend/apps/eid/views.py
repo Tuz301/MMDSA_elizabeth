@@ -13,7 +13,8 @@ from __future__ import annotations
 from datetime import timedelta
 
 from django.db import transaction
-from django.db.models import Case, IntegerField, When
+from drf_spectacular.utils import extend_schema
+from django.db.models import Case, F, IntegerField, When
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
@@ -54,6 +55,7 @@ class EidAppointmentViewSet(ScopedModelViewSet):
             )
         return None
 
+    @extend_schema(request=AppointmentAttendedSerializer, responses=EidAppointmentSerializer)
     @action(detail=True, methods=["post"])
     def attended(self, request, pk=None):
         serializer = AppointmentAttendedSerializer(data=request.data)
@@ -77,6 +79,7 @@ class EidAppointmentViewSet(ScopedModelViewSet):
         appointment.save(update_fields=["status", "attended_date", "updated_at"])
         return Response(self.get_serializer(appointment).data)
 
+    @extend_schema(request=None, responses=EidAppointmentSerializer)
     @action(detail=True, methods=["post"])
     def missed(self, request, pk=None):
         appointment = self.get_object()
@@ -91,6 +94,7 @@ class EidAppointmentViewSet(ScopedModelViewSet):
         appointment.save(update_fields=["status", "updated_at"])
         return Response(self.get_serializer(appointment).data)
 
+    @extend_schema(request=AppointmentRescheduleSerializer, responses=EidAppointmentSerializer)
     @action(detail=True, methods=["post"])
     def reschedule(self, request, pk=None):
         serializer = AppointmentRescheduleSerializer(data=request.data)
@@ -140,7 +144,13 @@ class EidSampleViewSet(ScopedModelViewSet):
             super()
             .get_queryset()
             .annotate(triage_rank=unacknowledged_positive_first)
-            .order_by("triage_rank", "result_entered_at", "-collected_on")
+            # nulls_last keeps the order identical on SQLite and Postgres,
+            # which sort null timestamps at opposite ends by default.
+            .order_by(
+                "triage_rank",
+                F("result_entered_at").asc(nulls_last=True),
+                "-collected_on",
+            )
         )
 
     def perform_create(self, serializer):
@@ -156,6 +166,7 @@ class EidSampleViewSet(ScopedModelViewSet):
                     update_fields=["status", "attended_date", "updated_at"]
                 )
 
+    @extend_schema(request=SampleResultSerializer, responses=EidSampleSerializer)
     @action(detail=True, methods=["post"])
     def result(self, request, pk=None):
         """
@@ -203,19 +214,31 @@ class EidSampleViewSet(ScopedModelViewSet):
 
             infant = sample.appointment.infant
             if sample.result == EidSample.Result.POSITIVE:
-                infant.outcome = Infant.Outcome.HIV_POSITIVE_NOT_LINKED
-                infant.outcome_recorded_at = timezone.now()
-                infant.save(
-                    update_fields=["outcome", "outcome_recorded_at", "updated_at"]
-                )
-                ArtLinkage.objects.get_or_create(
-                    infant=infant,
-                    defaults={
-                        "triggering_sample": sample,
-                        "status": ArtLinkage.Status.PENDING,
-                        "recorded_by": request.user,
-                    },
-                )
+                # A confirmatory positive on an infant already linked to
+                # treatment must not regress the outcome: the linkage record
+                # is the authority on treatment state. The outcome flips only
+                # while the infant is genuinely awaiting linkage.
+                linkage = ArtLinkage.objects.filter(infant=infant).first()
+                if linkage is None:
+                    ArtLinkage.objects.create(
+                        infant=infant,
+                        triggering_sample=sample,
+                        status=ArtLinkage.Status.PENDING,
+                        recorded_by=request.user,
+                    )
+                still_awaiting = linkage is None or linkage.status in {
+                    ArtLinkage.Status.PENDING,
+                    ArtLinkage.Status.REFUSED,
+                    ArtLinkage.Status.UNREACHABLE,
+                }
+                if still_awaiting and infant.outcome != (
+                    Infant.Outcome.HIV_POSITIVE_NOT_LINKED
+                ):
+                    infant.outcome = Infant.Outcome.HIV_POSITIVE_NOT_LINKED
+                    infant.outcome_recorded_at = timezone.now()
+                    infant.save(
+                        update_fields=["outcome", "outcome_recorded_at", "updated_at"]
+                    )
             elif sample.result == EidSample.Result.INDETERMINATE:
                 # One repeat slot exists per infant by schema. A second
                 # indeterminate result cannot get a second repeat appointment
@@ -229,6 +252,7 @@ class EidSampleViewSet(ScopedModelViewSet):
 
         return Response(self.get_serializer(sample).data)
 
+    @extend_schema(request=None, responses=EidSampleSerializer)
     @action(detail=True, methods=["post"])
     def acknowledge(self, request, pk=None):
         """
@@ -269,6 +293,7 @@ class EidSampleViewSet(ScopedModelViewSet):
 
         return Response(self.get_serializer(sample).data)
 
+    @extend_schema(request=None, responses=EidSampleSerializer)
     @action(detail=True, methods=["post"], url_path="caregiver-informed")
     def caregiver_informed(self, request, pk=None):
         sample = self.get_object()
