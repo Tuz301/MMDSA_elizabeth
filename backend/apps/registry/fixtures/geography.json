@@ -1,0 +1,56 @@
+{
+  "comment": "The pilot geography. Decided 2026-09: Ogun and Plateau. Geography is data, not code: no state name appears in any module, migration or constant, so a change of pilot site is an edit to this file and a re-run of seed_geography. LGA pilot and reserve flags are set by programme management once facility readiness is assessed; they default to false here.",
+  "states": [
+    {
+      "name": "Ogun",
+      "code": "OG",
+      "is_pilot_site": true,
+      "lgas": [
+        {"name": "Abeokuta North", "code": "OG-01"},
+        {"name": "Abeokuta South", "code": "OG-02"},
+        {"name": "Ado-Odo/Ota", "code": "OG-03"},
+        {"name": "Ewekoro", "code": "OG-04"},
+        {"name": "Ifo", "code": "OG-05"},
+        {"name": "Ijebu East", "code": "OG-06"},
+        {"name": "Ijebu North", "code": "OG-07"},
+        {"name": "Ijebu North East", "code": "OG-08"},
+        {"name": "Ijebu Ode", "code": "OG-09"},
+        {"name": "Ikenne", "code": "OG-10"},
+        {"name": "Imeko Afon", "code": "OG-11"},
+        {"name": "Ipokia", "code": "OG-12"},
+        {"name": "Obafemi Owode", "code": "OG-13"},
+        {"name": "Odeda", "code": "OG-14"},
+        {"name": "Odogbolu", "code": "OG-15"},
+        {"name": "Ogun Waterside", "code": "OG-16"},
+        {"name": "Remo North", "code": "OG-17"},
+        {"name": "Sagamu", "code": "OG-18"},
+        {"name": "Yewa North", "code": "OG-19"},
+        {"name": "Yewa South", "code": "OG-20"}
+      ]
+    },
+    {
+      "name": "Plateau",
+      "code": "PL",
+      "is_pilot_site": true,
+      "lgas": [
+        {"name": "Barkin Ladi", "code": "PL-01"},
+        {"name": "Bassa", "code": "PL-02"},
+        {"name": "Bokkos", "code": "PL-03"},
+        {"name": "Jos East", "code": "PL-04"},
+        {"name": "Jos North", "code": "PL-05"},
+        {"name": "Jos South", "code": "PL-06"},
+        {"name": "Kanam", "code": "PL-07"},
+        {"name": "Kanke", "code": "PL-08"},
+        {"name": "Langtang North", "code": "PL-09"},
+        {"name": "Langtang South", "code": "PL-10"},
+        {"name": "Mangu", "code": "PL-11"},
+        {"name": "Mikang", "code": "PL-12"},
+        {"name": "Pankshin", "code": "PL-13"},
+        {"name": "Qua'an Pan", "code": "PL-14"},
+        {"name": "Riyom", "code": "PL-15"},
+        {"name": "Shendam", "code": "PL-16"},
+        {"name": "Wase", "code": "PL-17"}
+      ]
+    }
+  ]
+}

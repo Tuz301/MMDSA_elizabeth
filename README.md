@@ -88,10 +88,13 @@ every patient at every site and no test would fail.
 
 ## Decisions that need sign-off
 
-**The pilot geography is unresolved.** Two records exist: FCT, Benue and
-Nasarawa in one, Plateau and Ogun in another. No state name appears anywhere in
-the code, the migrations or the constants, so this costs nothing to settle late.
-It does block the seed fixture and the budget travel lines.
+**The pilot geography is Ogun and Plateau.** Decided September 2026. The
+states and their local government areas load from
+`apps/registry/fixtures/geography.json` via `manage.py seed_geography`, which
+is idempotent and never deletes. No state name appears anywhere in the code,
+the migrations or the constants — a test enforces this — so a change of pilot
+site remains an edit to the fixture. LGA and facility pilot flags are set by
+programme management once readiness is assessed.
 
 **Django 5.2 LTS, not 4.2.** Annex B specifies 4.2 LTS, which left extended
 support in April 2026. 5.2 is supported to 2028, past the scale-up phase. The
@@ -114,8 +117,7 @@ over the raw body and refuses every callback until the webhook secret is set.
 
 ## What is not built
 
-- The React Native client and the React supervisor dashboard.
-- The geography fixture, which is blocked on the decision above.
+- The React Native client for mentor mothers.
 - A live Termii integration test. This is the largest remaining risk. The whole
   causal chain assumes two-way SMS is reliable on the pilot networks, and that
   assumption is currently untested against a real handset on a real carrier.
