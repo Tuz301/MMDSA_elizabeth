@@ -294,6 +294,14 @@ label { display: block; font-size: 13px; color: var(--ink-soft); margin-bottom: 
   .shell { flex-direction: column; }
   .sidebar { width: 100%; flex-direction: row; align-items: center; overflow-x: auto; padding: 8px; }
   .sidebar nav { display: flex; }
-  .sidebar .whoami { display: none; }
+  /* Sign-out stays reachable: these are shared facility computers. */
+  .sidebar .whoami {
+    margin: 0 0 0 auto;
+    padding: 0 8px;
+    border-top: none;
+    white-space: nowrap;
+  }
+  .sidebar .whoami .whoami-detail { display: none; }
+  .sidebar .whoami button { margin-top: 0 !important; }
   .main { padding: 16px; }
 }

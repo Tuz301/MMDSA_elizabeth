@@ -17,7 +17,7 @@ class EidAppointmentFilter(django_filters.FilterSet):
     class Meta:
         model = EidAppointment
         fields = {
-            "status": ["exact"],
+            "status": ["exact", "in"],
             "milestone": ["exact"],
             "infant": ["exact"],
             "infant__facility": ["exact"],
@@ -25,9 +25,15 @@ class EidAppointmentFilter(django_filters.FilterSet):
         }
 
     def filter_overdue(self, queryset, name, value):
+        # A rescheduled appointment past its new date is overdue too. Only
+        # SCHEDULED would let a reschedule permanently hide an infant from
+        # the overdue worklist.
         if value is True:
             return queryset.filter(
-                status=EidAppointment.Status.SCHEDULED,
+                status__in=[
+                    EidAppointment.Status.SCHEDULED,
+                    EidAppointment.Status.RESCHEDULED,
+                ],
                 due_date__lt=timezone.localdate(),
             )
         return queryset
@@ -61,7 +67,7 @@ class ArtLinkageFilter(django_filters.FilterSet):
     class Meta:
         model = ArtLinkage
         fields = {
-            "status": ["exact"],
+            "status": ["exact", "in"],
             "infant__facility": ["exact"],
             "treating_facility": ["exact"],
         }

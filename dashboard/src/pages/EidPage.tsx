@@ -17,12 +17,20 @@ import {
   useCaregiverInformed,
   useEnterResult,
   useLinkages,
+  useRegisterSample,
+  useSamples,
   useUpdateLinkage,
 } from "../api/hooks";
-import { useSamples } from "../api/hooks";
-import type { ArtLinkage, EidSample } from "../api/types";
-import { formatDate, formatDateTime, formatHours } from "../lib/format";
-import { Empty, ErrorBanner, FieldError, Modal, StatusPill } from "../components/ui";
+import type { ArtLinkage, EidAppointment, EidSample } from "../api/types";
+import { formatDate, formatDateTime, formatHours, lagosToday } from "../lib/format";
+import {
+  Empty,
+  ErrorBanner,
+  FieldError,
+  Modal,
+  StatusPill,
+  TruncationNote,
+} from "../components/ui";
 
 type Tab = "samples" | "appointments" | "linkages";
 
@@ -71,6 +79,10 @@ function SamplesTab() {
   const acknowledge = useAcknowledgeSample();
   const caregiverInformed = useCaregiverInformed();
   const [entering, setEntering] = useState<EidSample | null>(null);
+  const [confirming, setConfirming] = useState<{
+    kind: "acknowledge" | "informed";
+    sample: EidSample;
+  } | null>(null);
 
   const rows = samples.data?.results ?? [];
 
@@ -116,19 +128,72 @@ function SamplesTab() {
                   <td><NextStep
                     sample={sample}
                     onEnter={() => setEntering(sample)}
-                    onAcknowledge={() => acknowledge.mutate(sample.id)}
-                    onCaregiverInformed={() => caregiverInformed.mutate(sample.id)}
+                    onAcknowledge={() =>
+                      setConfirming({ kind: "acknowledge", sample })
+                    }
+                    onCaregiverInformed={() =>
+                      setConfirming({ kind: "informed", sample })
+                    }
                     busy={acknowledge.isPending || caregiverInformed.isPending}
                   /></td>
                 </tr>
               ))}
             </tbody>
           </table>
+          <TruncationNote shown={rows.length} total={samples.data?.count} />
         </div>
       )}
 
       {entering && (
         <ResultEntryModal sample={entering} onClose={() => setEntering(null)} />
+      )}
+
+      {confirming && (
+        <Modal
+          title={
+            confirming.kind === "acknowledge"
+              ? "Acknowledge this result"
+              : "Caregiver informed"
+          }
+          onClose={() => setConfirming(null)}
+        >
+          <p style={{ marginTop: 0 }}>
+            {confirming.kind === "acknowledge" ? (
+              <>
+                Acknowledge the{" "}
+                <strong>{confirming.sample.result}</strong> result for{" "}
+                <span className="code">{confirming.sample.baby_code}</span>?
+                The time of acknowledgement is recorded once and cannot be
+                changed.
+              </>
+            ) : (
+              <>
+                Record that the caregiver of{" "}
+                <span className="code">{confirming.sample.baby_code}</span> has
+                been told the result? This is recorded once and cannot be
+                changed.
+              </>
+            )}
+          </p>
+          <div className="actions">
+            <button className="secondary" onClick={() => setConfirming(null)}>
+              Cancel
+            </button>
+            <button
+              disabled={acknowledge.isPending || caregiverInformed.isPending}
+              onClick={() => {
+                const { kind, sample } = confirming;
+                const mutation =
+                  kind === "acknowledge" ? acknowledge : caregiverInformed;
+                mutation.mutate(sample.id, {
+                  onSuccess: () => setConfirming(null),
+                });
+              }}
+            >
+              Confirm
+            </button>
+          </div>
+        </Modal>
       )}
     </>
   );
@@ -244,32 +309,46 @@ function ResultEntryModal({
 
 // -- Appointments -----------------------------------------------------------
 
+const APPOINTMENT_VIEWS: [string, string, Record<string, string>][] = [
+  ["overdue", "Overdue", { overdue: "true" }],
+  ["upcoming", "Scheduled", { status__in: "SCHEDULED,RESCHEDULED" }],
+  ["missed", "Missed", { status: "MISSED" }],
+];
+
 function AppointmentsTab() {
-  const [overdueOnly, setOverdueOnly] = useState(true);
-  const appointments = useAppointments(
-    overdueOnly ? { overdue: "true" } : { status: "SCHEDULED" },
-  );
+  const [view, setView] = useState("overdue");
+  const filters =
+    APPOINTMENT_VIEWS.find(([key]) => key === view)?.[2] ?? {};
+  const appointments = useAppointments(filters);
   const act = useAppointmentAction();
+  const [recordingSample, setRecordingSample] = useState<EidAppointment | null>(null);
+  const [rescheduling, setRescheduling] = useState<EidAppointment | null>(null);
+  const [confirmingMissed, setConfirmingMissed] = useState<EidAppointment | null>(null);
   const rows = appointments.data?.results ?? [];
 
   return (
     <>
       <ErrorBanner error={appointments.error ?? act.error} />
       <div className="toolbar">
-        <label style={{ margin: 0 }}>
-          <input
-            type="checkbox"
-            checked={overdueOnly}
-            onChange={(event) => setOverdueOnly(event.target.checked)}
-          />{" "}
-          Overdue only
-        </label>
+        <label htmlFor="appointment-view" style={{ margin: 0 }}>View</label>
+        <select
+          id="appointment-view"
+          value={view}
+          onChange={(event) => setView(event.target.value)}
+        >
+          {APPOINTMENT_VIEWS.map(([key, label]) => (
+            <option key={key} value={key}>{label}</option>
+          ))}
+        </select>
       </div>
       {rows.length === 0 ? (
         <Empty>
-          {overdueOnly ? "No overdue appointments. That is the goal." : "No scheduled appointments."}
+          {view === "overdue"
+            ? "No overdue appointments. That is the goal."
+            : "Nothing in this view."}
         </Empty>
       ) : (
+        <>
         <div className="table-wrap">
           <table>
             <thead>
@@ -294,43 +373,213 @@ function AppointmentsTab() {
                   <td>{appointment.days_overdue || "—"}</td>
                   <td><StatusPill value={appointment.status} /></td>
                   <td>
-                    <button
-                      className="subtle"
-                      disabled={act.isPending}
-                      onClick={() =>
-                        act.mutate({
-                          id: appointment.id,
-                          action: "attended",
-                          body: {
-                            attended_date: new Date().toISOString().slice(0, 10),
-                          },
-                        })
-                      }
-                    >
-                      Attended today
-                    </button>{" "}
-                    <button
-                      className="subtle"
-                      disabled={act.isPending}
-                      onClick={() => act.mutate({ id: appointment.id, action: "missed" })}
-                    >
-                      Missed
-                    </button>
+                    {["SCHEDULED", "RESCHEDULED"].includes(appointment.status) && (
+                      <>
+                        <button
+                          className="subtle"
+                          onClick={() => setRecordingSample(appointment)}
+                        >
+                          Record sample…
+                        </button>{" "}
+                        <button
+                          className="subtle"
+                          disabled={act.isPending}
+                          onClick={() => setConfirmingMissed(appointment)}
+                        >
+                          Missed…
+                        </button>{" "}
+                      </>
+                    )}
+                    {["SCHEDULED", "RESCHEDULED", "MISSED"].includes(
+                      appointment.status,
+                    ) && (
+                      <button
+                        className="subtle"
+                        onClick={() => setRescheduling(appointment)}
+                      >
+                        Reschedule…
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        <TruncationNote shown={rows.length} total={appointments.data?.count} />
+        </>
+      )}
+
+      {recordingSample && (
+        <RegisterSampleModal
+          appointment={recordingSample}
+          onClose={() => setRecordingSample(null)}
+        />
+      )}
+
+      {rescheduling && (
+        <RescheduleModal
+          appointment={rescheduling}
+          onClose={() => setRescheduling(null)}
+        />
+      )}
+
+      {confirmingMissed && (
+        <Modal title="Mark this appointment missed" onClose={() => setConfirmingMissed(null)}>
+          <p style={{ marginTop: 0 }}>
+            Mark the{" "}
+            {confirmingMissed.milestone.replaceAll("_", " ").toLowerCase()} test
+            for <span className="code">{confirmingMissed.infant}</span> as
+            missed? The engine will prompt a follow-up, and the appointment can
+            be rescheduled afterwards.
+          </p>
+          <div className="actions">
+            <button className="secondary" onClick={() => setConfirmingMissed(null)}>
+              Cancel
+            </button>
+            <button
+              disabled={act.isPending}
+              onClick={() =>
+                act.mutate(
+                  { id: confirmingMissed.id, action: "missed" },
+                  { onSuccess: () => setConfirmingMissed(null) },
+                )
+              }
+            >
+              Mark missed
+            </button>
+          </div>
+        </Modal>
       )}
     </>
+  );
+}
+
+function RegisterSampleModal({
+  appointment,
+  onClose,
+}: {
+  appointment: EidAppointment;
+  onClose: () => void;
+}) {
+  const register = useRegisterSample();
+  const [sampleId, setSampleId] = useState("");
+  const [collectedOn, setCollectedOn] = useState(lagosToday());
+  const [laboratory, setLaboratory] = useState("");
+
+  return (
+    <Modal
+      title={`Record the sample for ${appointment.infant}`}
+      onClose={onClose}
+    >
+      <p style={{ marginTop: 0, color: "var(--ink-soft)" }}>
+        Attendance is recorded through the sample: registering the dried
+        blood spot marks the{" "}
+        {appointment.milestone.replaceAll("_", " ").toLowerCase()} appointment
+        attended and starts the laboratory clock.
+      </p>
+      <ErrorBanner error={register.error} />
+      <div className="field">
+        <label htmlFor="sample-id">Sample identifier (from the DBS card)</label>
+        <input
+          id="sample-id"
+          value={sampleId}
+          onChange={(event) => setSampleId(event.target.value)}
+        />
+        <FieldError error={register.error} field="sample_identifier" />
+      </div>
+      <div className="field">
+        <label htmlFor="collected-on">Collected on</label>
+        <input
+          id="collected-on"
+          type="date"
+          value={collectedOn}
+          onChange={(event) => setCollectedOn(event.target.value)}
+        />
+        <FieldError error={register.error} field="collected_on" />
+      </div>
+      <div className="field">
+        <label htmlFor="sample-laboratory">Laboratory (optional)</label>
+        <input
+          id="sample-laboratory"
+          value={laboratory}
+          onChange={(event) => setLaboratory(event.target.value)}
+        />
+      </div>
+      <div className="actions">
+        <button className="secondary" onClick={onClose}>Cancel</button>
+        <button
+          disabled={!sampleId.trim() || !collectedOn || register.isPending}
+          onClick={() =>
+            register.mutate(
+              {
+                appointment: appointment.id,
+                sample_identifier: sampleId.trim(),
+                collected_on: collectedOn,
+                laboratory_name: laboratory.trim() || undefined,
+              },
+              { onSuccess: onClose },
+            )
+          }
+        >
+          Record sample
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function RescheduleModal({
+  appointment,
+  onClose,
+}: {
+  appointment: EidAppointment;
+  onClose: () => void;
+}) {
+  const act = useAppointmentAction();
+  const [dueDate, setDueDate] = useState("");
+
+  return (
+    <Modal title={`Reschedule for ${appointment.infant}`} onClose={onClose}>
+      <ErrorBanner error={act.error} />
+      <div className="field">
+        <label htmlFor="new-due-date">New appointment date</label>
+        <input
+          id="new-due-date"
+          type="date"
+          value={dueDate}
+          onChange={(event) => setDueDate(event.target.value)}
+        />
+      </div>
+      <div className="actions">
+        <button className="secondary" onClick={onClose}>Cancel</button>
+        <button
+          disabled={!dueDate || act.isPending}
+          onClick={() =>
+            act.mutate(
+              {
+                id: appointment.id,
+                action: "reschedule",
+                body: { due_date: dueDate },
+              },
+              { onSuccess: onClose },
+            )
+          }
+        >
+          Reschedule
+        </button>
+      </div>
+    </Modal>
   );
 }
 
 // -- Linkages ---------------------------------------------------------------
 
 function LinkagesTab() {
-  const linkages = useLinkages({ status: "PENDING" });
+  // REFUSED and UNREACHABLE stay in the default view: those infants are
+  // still awaiting treatment, and a recorded refusal must not remove a
+  // child from the only worklist tracking them.
+  const linkages = useLinkages({ status__in: "PENDING,REFUSED,UNREACHABLE" });
   const [recording, setRecording] = useState<ArtLinkage | null>(null);
   const rows = linkages.data?.results ?? [];
 
@@ -338,8 +587,9 @@ function LinkagesTab() {
     <>
       <ErrorBanner error={linkages.error} />
       <p className="subtitle">
-        Every infant here has a positive result and is not yet on treatment.
-        Days outstanding counts from the laboratory issue date.
+        Every infant here has a positive result and is not yet on treatment —
+        including where the caregiver declined or could not be reached. Days
+        outstanding counts from the laboratory issue date.
       </p>
       {rows.length === 0 ? (
         <Empty>No infant is awaiting treatment linkage.</Empty>

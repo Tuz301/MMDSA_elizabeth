@@ -11,11 +11,24 @@ import { Link } from "react-router-dom";
 
 import { useAlerts, useMetricsSummary } from "../api/hooks";
 import { deadlineLabel, formatHours, formatPercent } from "../lib/format";
-import { Empty, ErrorBanner, SeverityPill, StatusPill } from "../components/ui";
+import {
+  Empty,
+  ErrorBanner,
+  SeverityPill,
+  StatusPill,
+  TruncationNote,
+} from "../components/ui";
+
+const VERDICT_WORDS: Record<string, string> = {
+  OUT_OF_RANGE: "out of range",
+  LOW_ACCURACY: "imprecise fix",
+  NO_FIX: "no position",
+  NO_REFERENCE: "no household point on record",
+};
 
 export function OverviewPage() {
   const summary = useMetricsSummary();
-  const alerts = useAlerts({ status: "OPEN" });
+  const alerts = useAlerts({ status__in: "OPEN,ESCALATED" });
 
   const s = summary.data;
   const unacknowledged = s?.eid_cascade.unacknowledged_positives_now ?? 0;
@@ -79,6 +92,16 @@ export function OverviewPage() {
           <div className="stat-note">
             Target {s?.location_verification.target_pct ?? 85}% ·{" "}
             {s?.location_verification.visits ?? 0} visits.
+            {/* The breakdown, because a bare percentage invites reading an
+                unverified visit as misconduct when most are honest failures. */}
+            {s &&
+              Object.entries(s.location_verification.verdicts)
+                .filter(([verdict]) => verdict !== "VERIFIED")
+                .map(([verdict, count]) => (
+                  <div key={verdict}>
+                    {count} {VERDICT_WORDS[verdict] ?? verdict.toLowerCase()}
+                  </div>
+                ))}
           </div>
         </div>
         <div
@@ -97,7 +120,9 @@ export function OverviewPage() {
 
       <h2>Open alerts</h2>
       <ErrorBanner error={alerts.error} />
-      {alerts.data && alerts.data.results.length === 0 ? (
+      {!alerts.data ? (
+        <p className="subtitle">Loading alerts…</p>
+      ) : alerts.data.results.length === 0 ? (
         <Empty>No open alerts. The registers are quiet.</Empty>
       ) : (
         <div className="table-wrap">
@@ -111,7 +136,7 @@ export function OverviewPage() {
               </tr>
             </thead>
             <tbody>
-              {(alerts.data?.results ?? []).slice(0, 8).map((alert) => (
+              {alerts.data.results.slice(0, 8).map((alert) => (
                 <tr key={alert.id} className={alert.is_past_deadline ? "row-urgent" : ""}>
                   <td><SeverityPill severity={alert.severity} /></td>
                   <td>
@@ -123,6 +148,10 @@ export function OverviewPage() {
               ))}
             </tbody>
           </table>
+          <TruncationNote
+            shown={Math.min(8, alerts.data.results.length)}
+            total={alerts.data.count}
+          />
         </div>
       )}
     </>

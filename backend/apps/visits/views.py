@@ -9,6 +9,7 @@ writable by anybody.
 
 from __future__ import annotations
 
+import django_filters
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
@@ -28,15 +29,36 @@ from .serializers import (
 )
 
 
+class HomeVisitFilter(django_filters.FilterSet):
+    pending_review = django_filters.BooleanFilter(
+        method="filter_pending_review",
+        help_text="True narrows to flagged visits nobody has reviewed yet.",
+    )
+
+    class Meta:
+        model = HomeVisit
+        fields = [
+            "client", "mentor_mother", "client__facility", "purpose", "result",
+            "location_status", "flagged_for_review",
+        ]
+
+    def filter_pending_review(self, queryset, name, value):
+        # Server-side, because a client-side filter over a truncated page
+        # would quietly drop the oldest unreviewed visits once the queue
+        # grows past the page size.
+        if value is True:
+            return queryset.filter(
+                flagged_for_review=True, reviewed_at__isnull=True
+            )
+        return queryset
+
+
 class HomeVisitViewSet(ScopedReadOnlyModelViewSet):
     queryset = HomeVisit.objects.select_related(
         "client", "infant", "mentor_mother", "reviewed_by"
     )
     serializer_class = HomeVisitSerializer
-    filterset_fields = [
-        "client", "mentor_mother", "client__facility", "purpose", "result",
-        "location_status", "flagged_for_review",
-    ]
+    filterset_class = HomeVisitFilter
     ordering_fields = ["visit_date"]
 
     @extend_schema(request=VisitReviewSerializer, responses=HomeVisitSerializer)
@@ -46,6 +68,18 @@ class HomeVisitViewSet(ScopedReadOnlyModelViewSet):
         permission_classes=[IsActiveHealthWorker, CanEnterClinicalData],
     )
     def review(self, request, pk=None):
+        """
+        Record what the supervisor found.
+
+        Reviewing resolves the visit's open flag alert in the same
+        transaction, mirroring how acknowledging a sample resolves its
+        alert. Making the supervisor close the alert separately, restating
+        what they just recorded, trains them to ignore alerts.
+        """
+        from django.db import transaction
+
+        from apps.alerts.models import Alert
+
         serializer = VisitReviewSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         visit = self.get_object()
@@ -54,12 +88,26 @@ class HomeVisitViewSet(ScopedReadOnlyModelViewSet):
                 {"detail": "This visit has already been reviewed."},
                 status=status.HTTP_409_CONFLICT,
             )
-        visit.reviewed_by = request.user
-        visit.reviewed_at = timezone.now()
-        visit.review_outcome = serializer.validated_data["review_outcome"]
-        visit.save(
-            update_fields=["reviewed_by", "reviewed_at", "review_outcome", "updated_at"]
-        )
+        with transaction.atomic():
+            visit.reviewed_by = request.user
+            visit.reviewed_at = timezone.now()
+            visit.review_outcome = serializer.validated_data["review_outcome"]
+            visit.save(
+                update_fields=[
+                    "reviewed_by", "reviewed_at", "review_outcome", "updated_at",
+                ]
+            )
+            open_alerts = Alert.objects.filter(
+                alert_type="VISIT_FLAG",
+                subject_type="visits.HomeVisit",
+                subject_id=visit.pk,
+                status__in=[Alert.Status.OPEN, Alert.Status.ESCALATED,
+                            Alert.Status.ACKNOWLEDGED],
+            )
+            for alert in open_alerts:
+                if alert.status != Alert.Status.ACKNOWLEDGED:
+                    alert.acknowledge(user=request.user, channel="APP")
+                alert.resolve(note=visit.review_outcome)
         return Response(self.get_serializer(visit).data)
 
 

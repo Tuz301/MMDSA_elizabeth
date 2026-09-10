@@ -48,9 +48,11 @@ export function Layout() {
           {clinical && <NavLink to="/registry">Registry</NavLink>}
         </nav>
         <div className="whoami">
-          <strong>{me.username}</strong>
-          {me.role_display}
-          <div>{scope}</div>
+          <span className="whoami-detail">
+            <strong>{me.username}</strong>
+            {me.role_display}
+            <div>{scope}</div>
+          </span>
           <button className="subtle" style={{ marginTop: 10 }} onClick={signOut}>
             Sign out
           </button>

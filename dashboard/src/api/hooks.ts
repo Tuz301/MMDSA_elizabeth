@@ -23,6 +23,7 @@ import type {
   EidAppointment,
   EidSample,
   Facility,
+  GeospatialAnomaly,
   HomeVisit,
   Infant,
   Me,
@@ -264,6 +265,37 @@ export function useReviewVisit() {
   return useMutation({
     mutationFn: ({ id, review_outcome }: { id: string; review_outcome: string }) =>
       api.post<HomeVisit>(`/api/v1/visits/records/${id}/review/`, { review_outcome }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useAnomalies(filters: Record<string, string | undefined>) {
+  return useQuery({
+    queryKey: ["anomalies", filters],
+    queryFn: () =>
+      api.get<Paginated<GeospatialAnomaly>>(
+        `/api/v1/visits/anomalies/${query({ limit: 100, ...filters })}`,
+      ),
+    refetchInterval: WORKLIST_REFRESH_MS,
+  });
+}
+
+export function useAnomalyDisposition() {
+  const invalidate = useInvalidator([["anomalies"]]);
+  return useMutation({
+    mutationFn: ({
+      id,
+      disposition,
+      review_note,
+    }: {
+      id: string;
+      disposition: string;
+      review_note: string;
+    }) =>
+      api.post<GeospatialAnomaly>(`/api/v1/visits/anomalies/${id}/disposition/`, {
+        disposition,
+        review_note,
+      }),
     onSuccess: invalidate,
   });
 }

@@ -17,8 +17,8 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -28,14 +28,22 @@ import { cognitoSignIn, type SignInOutcome } from "./cognito";
 
 const STORAGE_KEY = "mmdsa.access_token";
 
-export type AuthMode = "cognito" | "token";
+export type AuthMode = "cognito" | "token" | "session";
 
 export const AUTH_MODE: AuthMode =
   (import.meta.env.VITE_AUTH_MODE as AuthMode | undefined) ?? "cognito";
 
+/**
+ * Sentinel for session mode: the user is signed in through the Django
+ * session cookie, so requests carry no bearer header at all.
+ */
+export const SESSION_SENTINEL = "@session";
+
 interface AuthState {
   token: string | null;
+  authNotice: string | null;
   signInWithToken: (token: string) => void;
+  signInWithSession: () => void;
   signInWithCognito: (
     username: string,
     password: string,
@@ -55,8 +63,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   });
 
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
+
+  // The token lives in a ref as well as in state, and the client is
+  // configured synchronously during render, never in an effect. React runs
+  // child effects before parent effects, and the query layer fires its
+  // first fetch from a child effect — an effect-configured provider would
+  // hand that first fetch a null token, the 401 would call signOut, and
+  // sign-in could never complete outside session mode.
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
+
   const store = useCallback((value: string | null) => {
+    tokenRef.current = value;
     setToken(value);
+    if (value !== null) setAuthNotice(null);
     try {
       if (value === null) sessionStorage.removeItem(STORAGE_KEY);
       else sessionStorage.setItem(STORAGE_KEY, value);
@@ -67,17 +88,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(() => store(null), [store]);
 
-  useEffect(() => {
-    configureClient({
-      tokenProvider: () => token,
-      onUnauthorized: signOut,
-    });
-  }, [token, signOut]);
+  configureClient({
+    tokenProvider: () =>
+      tokenRef.current === SESSION_SENTINEL ? null : tokenRef.current,
+    onUnauthorized: () => {
+      if (tokenRef.current !== null) {
+        setAuthNotice(
+          "The server did not accept the session or token. Sign in again.",
+        );
+      }
+      store(null);
+    },
+  });
 
   const value = useMemo<AuthState>(
     () => ({
       token,
+      authNotice,
       signInWithToken: (raw: string) => store(raw.trim()),
+      signInWithSession: () => store(SESSION_SENTINEL),
       signInWithCognito: async (username, password, newPassword) => {
         const outcome = await cognitoSignIn(username, password, newPassword);
         if (outcome.kind === "success") store(outcome.accessToken);
@@ -85,7 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       signOut,
     }),
-    [token, store, signOut],
+    [token, authNotice, store, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

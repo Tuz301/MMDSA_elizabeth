@@ -16,13 +16,21 @@ import { useOutletContext } from "react-router-dom";
 import {
   useClients,
   useEnrolClient,
+  useFacilities,
   useInfants,
   useMentorMothers,
   useRegisterInfant,
 } from "../api/hooks";
 import type { Client, Me } from "../api/types";
 import { displayName, formatDate } from "../lib/format";
-import { Empty, ErrorBanner, FieldError, Modal, StatusPill } from "../components/ui";
+import {
+  Empty,
+  ErrorBanner,
+  FieldError,
+  Modal,
+  StatusPill,
+  TruncationNote,
+} from "../components/ui";
 
 export function RegistryPage() {
   const me = useOutletContext<Me>();
@@ -67,7 +75,6 @@ export function RegistryPage() {
       {registering && (
         <RegisterInfantModal
           mother={registering}
-          me={me}
           onClose={() => setRegistering(null)}
         />
       )}
@@ -125,6 +132,7 @@ function ClientsTab({
               ))}
             </tbody>
           </table>
+          <TruncationNote shown={rows.length} total={clients.data?.count} />
         </div>
       )}
     </>
@@ -165,9 +173,12 @@ function InfantsTab() {
                 <th>Outcome</th>
               </tr>
             </thead>
+            {/* No red rows here: awaiting linkage from day zero is work in
+                progress, not a breached deadline. The linkage worklist reds
+                an infant only past the target window. */}
             <tbody>
               {rows.map((infant) => (
-                <tr key={infant.id} className={infant.is_awaiting_art_linkage ? "row-urgent" : ""}>
+                <tr key={infant.id}>
                   <td className="code">{infant.baby_code}</td>
                   <td className="code">{infant.mother}</td>
                   <td>{formatDate(infant.date_of_birth)}</td>
@@ -177,6 +188,7 @@ function InfantsTab() {
               ))}
             </tbody>
           </table>
+          <TruncationNote shown={rows.length} total={infants.data?.count} />
         </div>
       )}
     </>
@@ -186,7 +198,12 @@ function InfantsTab() {
 function EnrolClientModal({ me, onClose }: { me: Me; onClose: () => void }) {
   const enrol = useEnrolClient();
   const mentorMothers = useMentorMothers();
+  // A supervisor enrols at their own facility. A coordinator or state
+  // manager has no home facility, so they pick one from their scope.
+  const facilities = useFacilities();
+  const canEnterIdentifiers = me.may_read_identifiers;
   const [form, setForm] = useState({
+    facility: me.facility?.id ?? "",
     client_code: "",
     full_name: "",
     phone_number: "",
@@ -206,10 +223,17 @@ function EnrolClientModal({ me, onClose }: { me: Me; onClose: () => void }) {
     event.preventDefault();
     enrol.mutate(
       {
-        facility: me.facility?.id,
+        facility: form.facility,
         client_code: form.client_code.trim(),
-        full_name: form.full_name.trim(),
-        phone_number: form.phone_number.trim() || undefined,
+        // Identifier fields are pruned from this role's input by the
+        // server; sending them would be silently ignored, so the form does
+        // not collect them either.
+        ...(canEnterIdentifiers
+          ? {
+              full_name: form.full_name.trim(),
+              phone_number: form.phone_number.trim() || undefined,
+            }
+          : {}),
         mentor_mother: form.mentor_mother || null,
         pregnancy_stage: form.pregnancy_stage,
         expected_delivery_date: form.expected_delivery_date || null,
@@ -232,6 +256,25 @@ function EnrolClientModal({ me, onClose }: { me: Me; onClose: () => void }) {
       <ErrorBanner error={enrol.error} />
       <form onSubmit={submit}>
         <div className="form-grid">
+          {!me.facility && (
+            <div className="field">
+              <label htmlFor="enrol-facility">Facility</label>
+              <select
+                id="enrol-facility"
+                required
+                value={form.facility}
+                onChange={(event) => set("facility", event.target.value)}
+              >
+                <option value="">Choose a facility…</option>
+                {(facilities.data?.results ?? []).map((facility) => (
+                  <option key={facility.id} value={facility.id}>
+                    {facility.name} ({facility.code})
+                  </option>
+                ))}
+              </select>
+              <FieldError error={enrol.error} field="facility" />
+            </div>
+          )}
           <div className="field">
             <label htmlFor="client-code">Client code</label>
             <input
@@ -242,25 +285,29 @@ function EnrolClientModal({ me, onClose }: { me: Me; onClose: () => void }) {
             />
             <FieldError error={enrol.error} field="client_code" />
           </div>
-          <div className="field">
-            <label htmlFor="full-name">Full name</label>
-            <input
-              id="full-name"
-              required
-              value={form.full_name}
-              onChange={(event) => set("full_name", event.target.value)}
-            />
-            <FieldError error={enrol.error} field="full_name" />
-          </div>
-          <div className="field">
-            <label htmlFor="phone">Telephone (optional, +234…)</label>
-            <input
-              id="phone"
-              value={form.phone_number}
-              onChange={(event) => set("phone_number", event.target.value)}
-            />
-            <FieldError error={enrol.error} field="phone_number" />
-          </div>
+          {canEnterIdentifiers && (
+            <>
+              <div className="field">
+                <label htmlFor="full-name">Full name</label>
+                <input
+                  id="full-name"
+                  required
+                  value={form.full_name}
+                  onChange={(event) => set("full_name", event.target.value)}
+                />
+                <FieldError error={enrol.error} field="full_name" />
+              </div>
+              <div className="field">
+                <label htmlFor="phone">Telephone (optional, +234…)</label>
+                <input
+                  id="phone"
+                  value={form.phone_number}
+                  onChange={(event) => set("phone_number", event.target.value)}
+                />
+                <FieldError error={enrol.error} field="phone_number" />
+              </div>
+            </>
+          )}
           <div className="field">
             <label htmlFor="mentor-mother">Mentor mother</label>
             <select
@@ -344,11 +391,9 @@ function EnrolClientModal({ me, onClose }: { me: Me; onClose: () => void }) {
 
 function RegisterInfantModal({
   mother,
-  me,
   onClose,
 }: {
   mother: Client;
-  me: Me;
   onClose: () => void;
 }) {
   const register = useRegisterInfant();
@@ -400,7 +445,10 @@ function RegisterInfantModal({
             register.mutate(
               {
                 mother: mother.client_code,
-                facility: me.facility?.id ?? mother.facility,
+                // Always the mother's facility: the server refuses a
+                // mismatch, and an infant is registered where the mother is
+                // in care.
+                facility: mother.facility,
                 date_of_birth: dateOfBirth,
                 sex,
                 given_name: givenName.trim() || undefined,

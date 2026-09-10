@@ -11,7 +11,8 @@ import { useState, type FormEvent } from "react";
 import { AUTH_MODE, useAuth } from "../auth/AuthContext";
 
 export function LoginPage() {
-  const { signInWithToken, signInWithCognito } = useAuth();
+  const { signInWithToken, signInWithCognito, signInWithSession, authNotice } =
+    useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -24,6 +25,10 @@ export function LoginPage() {
     event.preventDefault();
     setMessage(null);
 
+    if (AUTH_MODE === "session") {
+      signInWithSession();
+      return;
+    }
     if (AUTH_MODE === "token") {
       if (token.trim()) signInWithToken(token);
       else setMessage("Paste an access token to continue.");
@@ -53,9 +58,17 @@ export function LoginPage() {
       <form className="login-card" onSubmit={submit}>
         <h1>MMDSA Supervision</h1>
         <p className="subtitle">Sign in with your programme account.</p>
-        {message && <div className="banner-error">{message}</div>}
+        {(message ?? authNotice) && (
+          <div className="banner-error">{message ?? authNotice}</div>
+        )}
 
-        {AUTH_MODE === "token" ? (
+        {AUTH_MODE === "session" ? (
+          <p style={{ color: "var(--ink-soft)" }}>
+            Development mode: sign in to the Django admin at{" "}
+            <code className="code">/admin/</code> on the backend first, then
+            continue here with that session.
+          </p>
+        ) : AUTH_MODE === "token" ? (
           <div className="field">
             <label htmlFor="token">Access token (development mode)</label>
             <textarea

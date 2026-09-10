@@ -31,6 +31,7 @@ export function formatDateTime(value: string | null | undefined): string {
   return new Intl.DateTimeFormat("en-NG", {
     day: "numeric",
     month: "short",
+    year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     timeZone: LAGOS,
@@ -53,4 +54,18 @@ export function formatHours(value: number | null | undefined): string {
 export function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
   return `${value}%`;
+}
+
+/**
+ * Today's date in Lagos as YYYY-MM-DD. new Date().toISOString() would give
+ * the UTC date, which is yesterday between midnight and 01:00 local time —
+ * and a clinical record dated yesterday is a data-quality incident.
+ */
+export function lagosToday(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: LAGOS,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
 }

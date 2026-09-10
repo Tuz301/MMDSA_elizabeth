@@ -32,7 +32,11 @@ class AlertFilter(django_filters.FilterSet):
     class Meta:
         model = Alert
         fields = {
-            "status": ["exact"],
+            # "in" lets a worklist ask for OPEN and ESCALATED together —
+            # an escalated alert is the most urgent state, and a default
+            # view that hides it would bury exactly the alert that already
+            # missed its deadline once.
+            "status": ["exact", "in"],
             "severity": ["exact"],
             "alert_type": ["exact"],
             "facility": ["exact"],

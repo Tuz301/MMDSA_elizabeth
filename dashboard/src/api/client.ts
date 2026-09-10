@@ -38,7 +38,21 @@ export function configureClient(options: {
 
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "";
 
+function flattenMessage(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(flattenMessage).join(" ");
+  if (typeof value === "object" && value !== null) {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, nested]) => `${key}: ${flattenMessage(nested)}`)
+      .join("; ");
+  }
+  return String(value);
+}
+
 function normalizeError(status: number, body: unknown): ApiError {
+  if (Array.isArray(body)) {
+    return new ApiError(status, body.map(flattenMessage).join(" "));
+  }
   if (typeof body === "object" && body !== null) {
     const record = body as Record<string, unknown>;
     if (typeof record.detail === "string") {
@@ -47,9 +61,11 @@ function normalizeError(status: number, body: unknown): ApiError {
     const fieldErrors: FieldErrors = {};
     const summaries: string[] = [];
     for (const [field, value] of Object.entries(record)) {
-      const messages = (Array.isArray(value) ? value : [value]).map(String);
+      const messages = (Array.isArray(value) ? value : [value]).map(flattenMessage);
       fieldErrors[field] = messages;
-      summaries.push(`${field}: ${messages.join(" ")}`);
+      // non_field_errors is DRF plumbing, not a name a health worker knows.
+      const label = field === "non_field_errors" ? "" : `${field}: `;
+      summaries.push(`${label}${messages.join(" ")}`);
     }
     if (summaries.length > 0) {
       return new ApiError(status, summaries.join("; "), fieldErrors);
@@ -59,10 +75,15 @@ function normalizeError(status: number, body: unknown): ApiError {
     401: "Your session has expired. Sign in again.",
     403: "Your role does not permit this action.",
     404: "This record does not exist, or is outside your scope.",
-    409: "The record has moved on since you loaded it. It has been refreshed.",
+    409: "The record has moved on since you loaded it. Check its current state.",
     429: "Too many requests. Wait a moment and try again.",
   };
   return new ApiError(status, fallback[status] ?? `The server returned ${status}.`);
+}
+
+function readCookie(name: string): string | null {
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
 async function request<T>(
@@ -72,12 +93,21 @@ async function request<T>(
 ): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
   const token = tokenProvider();
-  if (token) headers.Authorization = `Bearer ${token}`;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  } else if (method !== "GET") {
+    // Session mode (development): the Django session cookie authenticates,
+    // and Django's CSRF check wants the cookie echoed in a header on every
+    // unsafe method.
+    const csrf = readCookie("csrftoken");
+    if (csrf) headers["X-CSRFToken"] = csrf;
+  }
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
   const response = await fetch(`${BASE}${path}`, {
     method,
     headers,
+    credentials: "same-origin",
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 

@@ -8,17 +8,43 @@
  */
 
 import { useState } from "react";
-import { useOutletContext } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
 
 import { useAcknowledgeAlert, useAlerts, useResolveAlert } from "../api/hooks";
 import type { Alert, Me } from "../api/types";
 import { deadlineLabel, formatDateTime } from "../lib/format";
-import { Empty, ErrorBanner, Modal, SeverityPill, StatusPill } from "../components/ui";
+import {
+  Empty,
+  ErrorBanner,
+  Modal,
+  SeverityPill,
+  StatusPill,
+  TruncationNote,
+} from "../components/ui";
+
+/** Where the thing an alert concerns can be acted on. */
+function subjectRoute(subjectType: string): string | null {
+  if (subjectType.startsWith("eid.") || subjectType === "registry.Infant") {
+    return "/eid";
+  }
+  if (subjectType === "visits.HomeVisit") return "/visits";
+  return null;
+}
+
+//: The default view is everything still demanding action. ESCALATED is the
+//: most urgent state an alert can be in — it already missed its deadline
+//: once — and a default that hid it would bury exactly the wrong rows.
+const VIEWS: [string, string, Record<string, string>][] = [
+  ["actionable", "Open & escalated", { status__in: "OPEN,ESCALATED" }],
+  ["acknowledged", "Acknowledged", { status: "ACKNOWLEDGED" }],
+  ["resolved", "Resolved", { status: "RESOLVED" }],
+  ["all", "All", {}],
+];
 
 export function AlertsPage() {
   const me = useOutletContext<Me>();
-  const [status, setStatus] = useState<string>("OPEN");
-  const alerts = useAlerts(status ? { status } : {});
+  const [view, setView] = useState<string>("actionable");
+  const alerts = useAlerts(VIEWS.find(([key]) => key === view)?.[2] ?? {});
   const acknowledge = useAcknowledgeAlert();
   const resolve = useResolveAlert();
   const [resolving, setResolving] = useState<Alert | null>(null);
@@ -36,17 +62,15 @@ export function AlertsPage() {
       <ErrorBanner error={alerts.error ?? acknowledge.error ?? resolve.error} />
 
       <div className="toolbar">
-        <label htmlFor="status-filter" style={{ margin: 0 }}>Status</label>
+        <label htmlFor="status-filter" style={{ margin: 0 }}>View</label>
         <select
           id="status-filter"
-          value={status}
-          onChange={(event) => setStatus(event.target.value)}
+          value={view}
+          onChange={(event) => setView(event.target.value)}
         >
-          <option value="OPEN">Open</option>
-          <option value="ESCALATED">Escalated</option>
-          <option value="ACKNOWLEDGED">Acknowledged</option>
-          <option value="RESOLVED">Resolved</option>
-          <option value="">All</option>
+          {VIEWS.map(([key, label]) => (
+            <option key={key} value={key}>{label}</option>
+          ))}
         </select>
       </div>
 
@@ -76,6 +100,14 @@ export function AlertsPage() {
                       <div style={{ color: "var(--ink-soft)", fontSize: 13 }}>
                         {alert.detail}
                       </div>
+                    )}
+                    {subjectRoute(alert.subject_type) && (
+                      <Link
+                        to={subjectRoute(alert.subject_type)!}
+                        style={{ fontSize: 13 }}
+                      >
+                        Open the worklist
+                      </Link>
                     )}
                   </td>
                   <td className="code">{alert.assigned_mentor_mother ?? "—"}</td>
@@ -117,6 +149,7 @@ export function AlertsPage() {
               ))}
             </tbody>
           </table>
+          <TruncationNote shown={rows.length} total={alerts.data?.count} />
         </div>
       )}
 

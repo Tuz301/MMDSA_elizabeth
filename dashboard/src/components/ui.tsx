@@ -12,8 +12,10 @@ export function SeverityPill({ severity }: { severity: Severity }) {
 }
 
 const STATUS_TONES: Record<string, string> = {
-  // Alert lifecycle.
-  OPEN: "urgent",
+  // Alert lifecycle. OPEN inside its deadline is work, not an emergency;
+  // the row turns red only when the deadline is breached. ESCALATED means
+  // the deadline already passed once.
+  OPEN: "warn",
   ESCALATED: "urgent",
   ACKNOWLEDGED: "warn",
   RESOLVED: "ok",
@@ -69,6 +71,22 @@ export function FieldError({ error, field }: { error: unknown; field: string }) 
 
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
+}
+
+export function TruncationNote({
+  shown,
+  total,
+}: {
+  shown: number;
+  total: number | undefined;
+}) {
+  if (!total || total <= shown) return null;
+  return (
+    <p style={{ color: "var(--ink-soft)", fontSize: 13 }}>
+      Showing the first {shown} of {total}. Narrow the filters to see the
+      rest — the most urgent rows always sort first.
+    </p>
+  );
 }
 
 export function Modal({

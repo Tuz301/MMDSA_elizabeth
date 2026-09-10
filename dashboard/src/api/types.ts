@@ -195,6 +195,8 @@ export interface Alert {
   status: "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "ESCALATED" | "CANCELLED";
   facility: string;
   assigned_mentor_mother: string | null;
+  subject_type: string;
+  subject_id: string;
   title: string;
   detail: string;
   raised_at: string;
@@ -237,6 +239,23 @@ export interface HomeVisit {
   latitude?: string | null;
   longitude?: string | null;
   notes?: string;
+}
+
+export interface GeospatialAnomaly {
+  id: string;
+  mentor_mother: string; // staff_code
+  kind:
+    | "IMPOSSIBLE_TRAVEL"
+    | "IDENTICAL_POSITION"
+    | "CLUSTERED_DAY"
+    | "BULK_BACKDATED";
+  detected_for_date: string;
+  detail: string;
+  confidence: "LOW" | "MEDIUM" | "HIGH";
+  disposition: "OPEN" | "EXPLAINED" | "DATA_CORRECTED" | "ESCALATED";
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_note: string;
 }
 
 export interface SyncBatch {

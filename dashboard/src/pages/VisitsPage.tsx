@@ -10,14 +10,28 @@
 import { useState } from "react";
 import { useOutletContext } from "react-router-dom";
 
-import { useReviewVisit, useSyncBatches, useVisits } from "../api/hooks";
-import type { HomeVisit, Me } from "../api/types";
+import {
+  useAnomalies,
+  useAnomalyDisposition,
+  useReviewVisit,
+  useSyncBatches,
+  useVisits,
+} from "../api/hooks";
+import type { GeospatialAnomaly, HomeVisit, Me } from "../api/types";
 import { formatDate, formatDateTime } from "../lib/format";
-import { Empty, ErrorBanner, Modal, StatusPill } from "../components/ui";
+import {
+  Empty,
+  ErrorBanner,
+  Modal,
+  StatusPill,
+  TruncationNote,
+} from "../components/ui";
 
 export function VisitsPage() {
   const me = useOutletContext<Me>();
-  const [tab, setTab] = useState<"review" | "all" | "sync">("review");
+  const [tab, setTab] = useState<"review" | "all" | "anomalies" | "sync">(
+    "review",
+  );
 
   return (
     <>
@@ -46,6 +60,14 @@ export function VisitsPage() {
         </button>
         <button
           role="tab"
+          aria-selected={tab === "anomalies"}
+          className={tab === "anomalies" ? "active" : ""}
+          onClick={() => setTab("anomalies")}
+        >
+          Anomalies
+        </button>
+        <button
+          role="tab"
           aria-selected={tab === "sync"}
           className={tab === "sync" ? "active" : ""}
           onClick={() => setTab("sync")}
@@ -54,8 +76,11 @@ export function VisitsPage() {
         </button>
       </div>
 
-      {tab === "review" && <VisitsTable filters={{ flagged_for_review: "true" }} me={me} reviewMode />}
+      {tab === "review" && (
+        <VisitsTable filters={{ pending_review: "true" }} me={me} reviewMode />
+      )}
       {tab === "all" && <VisitsTable filters={{}} me={me} />}
+      {tab === "anomalies" && <AnomaliesTab me={me} />}
       {tab === "sync" && <SyncTab />}
     </>
   );
@@ -75,9 +100,10 @@ function VisitsTable({
   const [reviewing, setReviewing] = useState<HomeVisit | null>(null);
   const [outcome, setOutcome] = useState("");
 
-  const rows = (visits.data?.results ?? []).filter(
-    (visit) => !reviewMode || visit.reviewed_at === null,
-  );
+  // The review queue is filtered on the server. A client-side filter over a
+  // truncated page would quietly drop the oldest unreviewed visits once the
+  // queue grows past the page size.
+  const rows = visits.data?.results ?? [];
 
   return (
     <>
@@ -143,6 +169,7 @@ function VisitsTable({
               ))}
             </tbody>
           </table>
+          <TruncationNote shown={rows.length} total={visits.data?.count} />
         </div>
       )}
 
@@ -184,6 +211,118 @@ function VisitsTable({
   );
 }
 
+function AnomaliesTab({ me }: { me: Me }) {
+  const anomalies = useAnomalies({ disposition: "OPEN" });
+  const disposition = useAnomalyDisposition();
+  const [reviewing, setReviewing] = useState<GeospatialAnomaly | null>(null);
+  const [kind, setKind] = useState("EXPLAINED");
+  const [note, setNote] = useState("");
+  const rows = anomalies.data?.results ?? [];
+
+  return (
+    <>
+      <ErrorBanner error={anomalies.error ?? disposition.error} />
+      <p className="subtitle">
+        A pattern the detection job noticed across visits. An anomaly is a
+        prompt for a conversation with the mentor mother, never a finding of
+        misconduct.
+      </p>
+      {rows.length === 0 ? (
+        <Empty>No anomalies are waiting for review.</Empty>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Mentor mother</th>
+                <th>Pattern</th>
+                <th>Confidence</th>
+                <th>What was measured</th>
+                {me.may_enter_clinical_data && <th></th>}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((anomaly) => (
+                <tr key={anomaly.id}>
+                  <td>{formatDate(anomaly.detected_for_date)}</td>
+                  <td className="code">{anomaly.mentor_mother}</td>
+                  <td>{anomaly.kind.replaceAll("_", " ")}</td>
+                  <td>{anomaly.confidence}</td>
+                  <td style={{ maxWidth: 320 }}>{anomaly.detail}</td>
+                  {me.may_enter_clinical_data && (
+                    <td>
+                      <button
+                        className="subtle"
+                        onClick={() => {
+                          setKind("EXPLAINED");
+                          setNote("");
+                          setReviewing(anomaly);
+                        }}
+                      >
+                        Record review…
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <TruncationNote shown={rows.length} total={anomalies.data?.count} />
+        </div>
+      )}
+
+      {reviewing && (
+        <Modal title="Record the conversation" onClose={() => setReviewing(null)}>
+          <p style={{ marginTop: 0, color: "var(--ink-soft)" }}>{reviewing.detail}</p>
+          <div className="field">
+            <label htmlFor="anomaly-disposition">What the conversation found</label>
+            <select
+              id="anomaly-disposition"
+              value={kind}
+              onChange={(event) => setKind(event.target.value)}
+            >
+              <option value="EXPLAINED">An innocent explanation was found</option>
+              <option value="DATA_CORRECTED">The underlying data was wrong</option>
+              <option value="ESCALATED">Refer to the programme manager</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="anomaly-note">Notes</label>
+            <textarea
+              id="anomaly-note"
+              rows={3}
+              style={{ width: "100%" }}
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+            />
+          </div>
+          <div className="actions">
+            <button className="secondary" onClick={() => setReviewing(null)}>
+              Cancel
+            </button>
+            <button
+              disabled={!note.trim() || disposition.isPending}
+              onClick={() =>
+                disposition.mutate(
+                  {
+                    id: reviewing.id,
+                    disposition: kind,
+                    review_note: note.trim(),
+                  },
+                  { onSuccess: () => setReviewing(null) },
+                )
+              }
+            >
+              Save
+            </button>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
 function SyncTab() {
   const batches = useSyncBatches();
   const rows = batches.data?.results ?? [];
@@ -211,9 +350,12 @@ function SyncTab() {
                 <th>Backlog</th>
               </tr>
             </thead>
+            {/* No red rows here: a red row naming a person invites the blame
+                framing the programme forbids. The SLA'd SYNC_BACKLOG alert
+                covers the breach case. */}
             <tbody>
               {rows.map((batch) => (
-                <tr key={batch.id} className={(batch.backlog_hours ?? 0) > 72 ? "row-urgent" : ""}>
+                <tr key={batch.id}>
                   <td>{formatDateTime(batch.created_at)}</td>
                   <td>{batch.user}</td>
                   <td className="code">{batch.device_id.slice(0, 12)}</td>

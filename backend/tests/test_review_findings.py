@@ -379,3 +379,44 @@ class TestInfantFacilityConsistency:
             format="json",
         )
         assert response.status_code == 400
+
+
+@pytest.mark.django_db
+class TestVisitReviewResolvesFlagAlert:
+    def test_recording_a_review_closes_the_flag_alert_in_one_step(
+        self, api_client, facility, mentor_mother, client_row, supervisor
+    ):
+        from apps.alerts.models import Alert, AlertRule
+        from apps.visits.models import HomeVisit
+
+        visit = HomeVisit.objects.create(
+            client=client_row,
+            mentor_mother=mentor_mother,
+            purpose="ROUTINE",
+            result="COMPLETED",
+            visit_date=dt.date.today(),
+            flagged_for_review=True,
+            review_reason="Reported position is 900 m from the registered household.",
+        )
+        rule = AlertRule.objects.create(
+            alert_type="VISIT_FLAG", severity="MEDIUM", threshold_value=1
+        )
+        alert = Alert.objects.create(
+            rule=rule,
+            alert_type="VISIT_FLAG",
+            severity="MEDIUM",
+            facility=facility,
+            subject_type="visits.HomeVisit",
+            subject_id=visit.pk,
+            deduplication_key=f"VISIT_FLAG:{visit.pk}",
+            title="A visit needs review",
+        )
+        response = api_client.post(
+            f"/api/v1/visits/records/{visit.pk}/review/",
+            {"review_outcome": "Household point was wrong; corrected at enrolment."},
+            format="json",
+        )
+        assert response.status_code == 200
+        alert.refresh_from_db()
+        assert alert.status == Alert.Status.RESOLVED
+        assert alert.resolution_note.startswith("Household point was wrong")
