@@ -105,6 +105,14 @@ Application Load Balancer with an AWS WAF web ACL: same rate limiting and
 request filtering, no per-request charge on top of the balancer, one fewer hop.
 Recorded in the `AppStack` docstring rather than hidden.
 
+## The dashboard
+
+`dashboard/` holds the React supervisor dashboard (Vite + TypeScript). It
+speaks only to the API above, renders programme codes whenever the server has
+pruned an identifier for the caller's role, and reserves the colour red for
+exactly two things: an unacknowledged positive result and a breached
+deadline. See `dashboard/README.md` for how it runs.
+
 ## The API
 
 The REST API lives under `/api/v1/`, with an authenticated OpenAPI viewer at
