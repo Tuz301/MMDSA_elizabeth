@@ -38,6 +38,8 @@ export function configureClient(options: {
 
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "";
 
+const REQUEST_TIMEOUT_MS = 20_000;
+
 function flattenMessage(value: unknown): string {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) return value.map(flattenMessage).join(" ");
@@ -104,12 +106,23 @@ async function request<T>(
   }
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
-  const response = await fetch(`${BASE}${path}`, {
-    method,
-    headers,
-    credentials: "same-origin",
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  // Every call has a ceiling. A hung request would otherwise leave a spinner
+  // running forever on the one screen a supervisor checks between patients.
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      method,
+      headers,
+      credentials: "same-origin",
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      throw new ApiError(0, "The server did not respond in time. Try again.");
+    }
+    throw new ApiError(0, "Could not reach the server. Check the connection.");
+  }
 
   if (response.status === 401) {
     onUnauthorized();

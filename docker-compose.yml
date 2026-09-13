@@ -1,0 +1,33 @@
+# Local development parity.
+#
+# The pilot runs PostgreSQL and Redis; SQLite is for checks and tests only.
+# This compose file gives a developer the same engines production uses, on
+# the same default names the settings read from the environment, so "works on
+# my machine" and "works in the pilot" stay the same claim.
+#
+#   docker compose up -d
+#   cd backend
+#   DB_PASSWORD=mmdsa-dev DB_SSLMODE=disable ./.venv/Scripts/python manage.py migrate
+#
+# Nothing here is a production configuration. The password below is a local
+# development value; the pilot's credentials live in AWS Secrets Manager.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: mmdsa
+      POSTGRES_USER: mmdsa_app
+      POSTGRES_PASSWORD: mmdsa-dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres-data:
