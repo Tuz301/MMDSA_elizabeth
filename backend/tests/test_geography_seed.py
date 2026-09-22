@@ -51,3 +51,28 @@ class TestGeographySeed:
                 if name in text:
                     offenders.append(f"{path.name}: {name}")
         assert offenders == []
+
+
+@pytest.mark.django_db
+class TestSmsOnlyMode:
+    def test_sms_only_disables_the_handset_rules_and_nothing_else(self):
+        from apps.alerts.models import AlertRule
+
+        call_command("seed_programme", "--sms-only")
+        disabled = set(
+            AlertRule.objects.filter(is_enabled=False).values_list(
+                "alert_type", flat=True
+            )
+        )
+        assert disabled == {"SYNC_BACKLOG", "VISIT_FLAG"}
+        # The clinical rules stay on: the SMS-only decision changes the
+        # channel, never the safety net.
+        assert AlertRule.objects.get(alert_type="POS_UNACK").is_enabled
+
+    def test_a_rerun_without_the_flag_respects_the_admin(self):
+        from apps.alerts.models import AlertRule
+
+        call_command("seed_programme", "--sms-only")
+        AlertRule.objects.filter(alert_type="SYNC_BACKLOG").update(is_enabled=True)
+        call_command("seed_programme")
+        assert AlertRule.objects.get(alert_type="SYNC_BACKLOG").is_enabled

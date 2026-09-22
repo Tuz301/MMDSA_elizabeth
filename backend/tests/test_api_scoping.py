@@ -266,3 +266,16 @@ class TestDenyByDefault:
         from apps.audit.models import AuditLog
 
         assert scope_queryset(AuditLog.objects.all(), supervisor).count() == 0
+
+
+@pytest.mark.django_db
+class TestSummaryHonestyMetrics:
+    def test_entry_lag_and_ack_channel_are_reported(
+        self, api_client, unacknowledged_positive, open_alert
+    ):
+        open_alert.acknowledge(user=None, channel="SMS")
+        body = api_client.get("/api/v1/metrics/summary/").json()
+        # The sample fixture was issued 3 days before entry (see conftest),
+        # so the entry-lag median must be visible, not hidden.
+        assert body["eid_cascade"]["entry_lag_median_days"] is not None
+        assert body["alerts"]["acknowledged_via"] == {"SMS": 1}

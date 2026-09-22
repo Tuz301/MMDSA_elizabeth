@@ -1,6 +1,8 @@
 # Systems checklist audit
 
-Run against "The 2026 Complete Systems Checklist" on 2026-09-13. Every item
+Run against "The 2026 Complete Systems Checklist" on 2026-09-13; revalidated
+in full on 2026-09-22 after the deployment mechanism, the Cognito token fix,
+user provisioning, the SMS-only channel mode and the honesty metrics landed. Every item
 gets one of three honest answers: **met** (with where), **deliberate
 deviation** (with why), or **deferred** (with the trigger that will make it
 due). An unmarked box would be a claim nobody checked; there are none here.
@@ -86,10 +88,17 @@ due). An unmarked box would be a claim nobody checked; there are none here.
 
 ## Part 4 — Security and auth
 
-- **Authentication — met.** AWS Cognito holds credentials; the API verifies
-  signature, audience and issuer against the JWKS and matches users on the
-  immutable Cognito subject, never the username. No password hash exists in
-  the pilot database.
+- **Authentication — met, and now tested.** AWS Cognito holds credentials;
+  the API verifies signature and issuer against the JWKS, then verifies the
+  client binding by token kind — aud on an ID token, client_id on an access
+  token, because Cognito access tokens carry no aud and checking aud alone
+  rejects exactly the token the dashboard sends. Fail-closed when no client
+  is configured. Ten tests sign realistically shaped tokens with a local RSA
+  key and walk both kinds plus every rejection path, so the one door real
+  traffic uses is no longer the one door nothing exercises. Users are
+  matched on the immutable Cognito subject and provisioned by
+  `manage.py provision_user`, which creates the Cognito account and the
+  Django row as one act.
 - **Authorization — met, with one deliberate deviation.** Every request
   passes a role check and a row-scope check, and both must pass. Deviation:
   an out-of-scope row returns **404, not 403**. In a system where row
@@ -134,14 +143,20 @@ due). An unmarked box would be a claim nobody checked; there are none here.
   every rule can be disabled instantly (`is_enabled`) and every threshold
   tuned without a deploy, which is precisely the runtime control this system
   needs. A general flag framework is YAGNI until there is a second consumer.
-- **CI/CD — met (CI), deliberate (CD).** `.github/workflows/ci.yml` runs the
-  backend suite + lint + schema check, the dashboard type-check + tests +
-  build, and a CDK synth on every push. Deployment to the pilot remains a
-  deliberate operator act — automatic deploys to an environment holding HIV
-  patient data need the change-control sign-off first.
+- **CI/CD — met (CI, verified running on GitHub), deliberate (CD).**
+  `.github/workflows/ci.yml` runs the backend suite + lint + schema check,
+  the dashboard type-check + tests + build, and a CDK synth on every push,
+  and has executed green on the GitHub repository. Deployment to the pilot
+  is a deliberate operator act with a real mechanism: an image in ECR, a
+  release pointer in SSM, and `scripts/deploy-app.sh` to build, push, move
+  the pointer and refresh the fleet. Automatic deploys to an environment
+  holding HIV patient data still wait on change-control sign-off, by
+  choice.
 - **Safe deploys and rollback — met.** CloudFormation rolls back a failed
-  stack update automatically; the ASG replaces instances rolling; `git
-  revert` + redeploy is the application rollback and is under five minutes.
+  stack update automatically; the ASG refreshes instances rolling, half the
+  fleet healthy at all times; and application rollback is moving the SSM
+  release pointer back to the previous tag and refreshing — the old image is
+  still in the repository. Under five minutes, no rebuild.
 - **Environment parity — met.** `docker-compose.yml` gives development the
   same PostgreSQL 16 and Redis 7 the pilot runs. SQLite remains what the
   README says it is: for checks and tests only.
@@ -164,9 +179,10 @@ due). An unmarked box would be a claim nobody checked; there are none here.
   every backing service; tests swap the encryption key, webhook secret,
   throttle rates and programme thresholds through fixtures without touching
   code.
-- **Automated tests — met.** 129 backend tests (unit through API
-  integration) plus dashboard tests; the suite runs in ~13 seconds, on every
-  push, and every review finding is pinned by a named regression test.
+- **Automated tests — met.** 145 backend tests (unit through API
+  integration, including the Cognito token path with locally signed RSA
+  tokens) plus dashboard tests; the suite runs in seconds, on every push,
+  and every review finding is pinned by a named regression test.
 - **Version control discipline — met.** Small commits, each message saying
   why; adversarial review before merge; the history reads as a narrative.
 
@@ -175,9 +191,12 @@ due). An unmarked box would be a claim nobody checked; there are none here.
 - **DNS/HTTP fundamentals — met.** Correct verbs, correct codes (201/400/
   401/403/404/409/429), explicit health vs readiness endpoints for the load
   balancer and the pipeline respectively.
-- **CDN — deferred.** The dashboard is a static bundle; serving it via
-  CloudFront is a one-stack addition due at go-live alongside the TLS
-  certificate. The pilot's users are in two Nigerian states, not global.
+- **CDN — met.** The dashboard ships to a private, encrypted bucket behind
+  CloudFront with Origin Access Control, HTTPS on the default certificate,
+  SPA routing, immutable caching for hashed assets and no-cache for
+  index.html (`scripts/deploy-dashboard.sh`). A custom domain remains a
+  go-live option; its certificate must live in us-east-1, recorded in
+  `infra/lib/README-region-constraints.md`.
 - **API design — met.** Nouns, `/api/v1/` from day one, pagination
   everywhere, one error shape, authenticated OpenAPI schema with zero
   generation warnings.
@@ -219,6 +238,15 @@ due). An unmarked box would be a claim nobody checked; there are none here.
 
 ## The scoreboard
 
-Met: 36 · Deliberate deviation or N/A with recorded reasoning: 8 ·
-Deferred with a named trigger: 5 (circuit breaker, tracing, Sentry, CDN,
+Met: 37 · Deliberate deviation or N/A with recorded reasoning: 8 ·
+Deferred with a named trigger: 4 (circuit breaker, tracing, Sentry,
 PgBouncer). Nothing unanswered.
+
+Revalidated 2026-09-22: 145 backend tests, 7 dashboard tests, lint clean,
+OpenAPI schema generation clean, all four stacks synthesize with exactly the
+two intentional go-live warnings (TLS certificate, alarm address). The two
+previously missing infrastructure documents (`infra/README.md`,
+`infra/lib/README-region-constraints.md`) now exist; the celery beat
+scheduler is a fleet-wide singleton behind a Redis lease; the evaluation
+summary reports entry lag and the acknowledgement channel split, so the
+headline relay number can no longer flatter itself.

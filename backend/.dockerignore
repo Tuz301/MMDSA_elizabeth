@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+dev.sqlite3
+staticfiles/
+Dockerfile
+.dockerignore

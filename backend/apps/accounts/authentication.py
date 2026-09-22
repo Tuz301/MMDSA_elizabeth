@@ -71,24 +71,58 @@ class CognitoJWTAuthentication(authentication.BaseAuthentication):
         return (user, token)
 
     def _decode(self, token: str) -> dict[str, Any]:
+        """
+        Verify signature and issuer, then verify the client binding by token
+        kind.
+
+        Cognito issues two token kinds and they carry the client identifier
+        in different claims: an ID token has aud, an access token has
+        client_id and no aud at all. Passing audience= to jwt.decode would
+        therefore reject every real access token — the token the dashboard
+        actually sends. The check runs manually instead, keyed on token_use.
+
+        With no client ids configured the check cannot run, and a check that
+        cannot run denies. The previous behaviour — skipping audience
+        verification when the list was empty — was fail-open.
+        """
         cfg = settings.COGNITO
-        audiences = [
+        client_ids = {
             a for a in (cfg["MOBILE_CLIENT_ID"], cfg["WEB_CLIENT_ID"]) if a
-        ]
+        }
+        if not client_ids:
+            raise exceptions.AuthenticationFailed(
+                "No Cognito client is configured, so no token can be accepted."
+            )
         try:
             signing_key = _jwks().get_signing_key_from_jwt(token)
-            return jwt.decode(
+            claims = jwt.decode(
                 token,
                 signing_key.key,
                 algorithms=["RS256"],
-                audience=audiences or None,
                 issuer=_issuer(),
-                options={"require": ["exp", "iat", "sub"]},
+                # The client binding is verified manually below, keyed on
+                # token_use, because the claim that names the client differs
+                # by token kind. PyJWT's own aud check cannot express that.
+                options={"require": ["exp", "iat", "sub"], "verify_aud": False},
             )
         except jwt.ExpiredSignatureError as exc:
             raise exceptions.AuthenticationFailed("The token has expired.") from exc
         except jwt.InvalidTokenError as exc:
             raise exceptions.AuthenticationFailed("The token is not valid.") from exc
+
+        token_use = claims.get("token_use")
+        if token_use == "access":
+            bound_client = claims.get("client_id")
+        elif token_use == "id":
+            bound_client = claims.get("aud")
+        else:
+            raise exceptions.AuthenticationFailed("The token kind is not recognised.")
+
+        if bound_client not in client_ids:
+            raise exceptions.AuthenticationFailed(
+                "The token was issued to an unknown client."
+            )
+        return claims
 
     def authenticate_header(self, request):
         return self.keyword

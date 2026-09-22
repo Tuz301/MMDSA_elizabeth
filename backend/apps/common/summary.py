@@ -84,6 +84,19 @@ def metrics_summary(request):
         result=EidSample.Result.POSITIVE, result_acknowledged_at__isnull=True
     ).count()
 
+    # The honesty check on the headline number. The relay delay starts when a
+    # result is entered in this system; entry lag is how long the result sat
+    # between the laboratory issuing it and that entry. A two-hour relay
+    # delay after a three-week entry lag is not a success, and reporting only
+    # the former would let the system take credit it has not earned.
+    entered = samples.filter(
+        result_entered_at__date__range=(date_from, date_to),
+        result_issued_on__isnull=False,
+    ).values_list("result_issued_on", "result_entered_at")
+    entry_lag_days = [
+        (entered_at.date() - issued).days for issued, entered_at in entered
+    ]
+
     acknowledged = samples.filter(
         result_entered_at__date__range=(date_from, date_to),
         result_acknowledged_at__isnull=False,
@@ -150,6 +163,17 @@ def metrics_summary(request):
         status__in=[Alert.Status.OPEN, Alert.Status.ESCALATED],
         acknowledge_by__lt=timezone.now(),
     ).count()
+    # Reported separately because they mean different things: an in-app
+    # acknowledgement was made by a signed-in, named supervisor; an SMS
+    # acknowledgement is a keyword from a matched telephone number. If the
+    # SMS share climbs while linkage does not move, the acknowledgements are
+    # being gamed, and the evaluation needs to see that directly.
+    acknowledged_via = {
+        row["acknowledgement_channel"] or "NONE": row["n"]
+        for row in window_alerts.filter(acknowledged_at__isnull=False)
+        .values("acknowledgement_channel")
+        .annotate(n=Count("id"))
+    }
 
     # -- Location verification ----------------------------------------------
     window_visits = visits.filter(visit_date__range=(date_from, date_to))
@@ -189,6 +213,9 @@ def metrics_summary(request):
                 "unacknowledged_positives_now": unacknowledged_positives,
                 "relay_delay_median_hours_all": _median(relay_all),
                 "relay_delay_median_hours_positive": _median(relay_positive),
+                "entry_lag_median_days": _median(
+                    [float(d) for d in entry_lag_days]
+                ),
             },
             "art_linkage": {
                 "days_to_linkage_median": _median([float(d) for d in days_to_linkage]),
@@ -201,6 +228,7 @@ def metrics_summary(request):
                 "raised": alerts_total,
                 "sla_compliance_pct": pct(alerts_in_sla, alerts_total),
                 "past_deadline_now": alerts_past_deadline_now,
+                "acknowledged_via": acknowledged_via,
             },
             "location_verification": {
                 "visits": visits_total,

@@ -27,6 +27,19 @@ class Command(BaseCommand):
                 "any threshold a programme manager has changed."
             ),
         )
+        parser.add_argument(
+            "--sms-only",
+            action="store_true",
+            help=(
+                "Configure the pilot for the SMS-only channel: mentor mothers "
+                "work by structured SMS and reply, with no smartphone "
+                "application. Disables the rules that watch handset activity "
+                "(SYNC_BACKLOG, VISIT_FLAG), because an alert about handsets "
+                "that do not exist trains supervisors to ignore alerts. "
+                "Reversible: rerun without the flag once handsets deploy, "
+                "then re-enable the two rules in the admin."
+            ),
+        )
 
     @transaction.atomic
     def handle(self, *args, **options):
@@ -79,10 +92,18 @@ class Command(BaseCommand):
             if created:
                 created_templates += 1
 
+        disabled_rules = 0
+        if options["sms_only"]:
+            disabled_rules = AlertRule.objects.filter(
+                alert_type__in=["SYNC_BACKLOG", "VISIT_FLAG"], is_enabled=True
+            ).update(is_enabled=False)
+
         self.stdout.write(
             self.style.SUCCESS(
-                f"Alert rules: {created_rules} created, {updated_rules} updated. "
-                f"Templates: {created_templates} created, "
+                f"Alert rules: {created_rules} created, {updated_rules} updated"
+                + (f", {disabled_rules} disabled for the SMS-only channel"
+                   if options["sms_only"] else "")
+                + f". Templates: {created_templates} created, "
                 f"{blocked_templates} blocked."
             )
         )

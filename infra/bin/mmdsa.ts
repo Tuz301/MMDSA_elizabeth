@@ -17,7 +17,16 @@ import { ObservabilityStack } from '../lib/observability-stack';
 const app = new cdk.App();
 
 const envName = app.node.tryGetContext('env') ?? process.env.MMDSA_ENV ?? 'dev';
-const config = getEnv(envName);
+let config = getEnv(envName);
+
+// The alarm address is deployment configuration, not code. Supply it with
+//   --context alarmEmail=ops@example.org
+// An alarm that notifies a placeholder notifies nobody; the AppStack warns
+// loudly when the placeholder survives into a pilot synth.
+const alarmEmail = app.node.tryGetContext('alarmEmail');
+if (alarmEmail) {
+  config = { ...config, alarmEmail };
+}
 
 const env: cdk.Environment = {
   account: config.account ?? process.env.CDK_DEFAULT_ACCOUNT,

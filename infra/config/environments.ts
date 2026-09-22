@@ -50,6 +50,11 @@ export interface EnvConfig {
 
 const BASE = {
   region: 'af-south-1',
+  // A placeholder on purpose: alarms must go to a monitored inbox, and that
+  // address is deployment configuration. Override at synth time with
+  //   --context alarmEmail=ops@example.org
+  // The AppStack refuses to stay quiet if this placeholder reaches a pilot
+  // synth. An alarm nobody receives is the paper register all over again.
   alarmEmail: 'platform-alerts@datapharm.example',
 };
 
@@ -92,7 +97,9 @@ export const ENVIRONMENTS: Record<EnvName, EnvConfig> = {
     dbDeletionProtection: true,
     redisNodeType: 'cache.t4g.small',
     redisNumNodes: 2,
-    appMinCapacity: 1,
+    // Two instances minimum: one instance normally serving everything is a
+    // single point of failure the multi-AZ database cannot compensate for.
+    appMinCapacity: 2,
     appMaxCapacity: 4,
     appInstanceType: 't4g.medium',
     logRetentionDays: 365,

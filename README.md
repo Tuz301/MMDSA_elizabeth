@@ -123,9 +123,30 @@ POST actions, never PATCHes of status fields. The evaluation summary is at
 `/api/v1/messaging/webhooks/termii/`: it verifies an HMAC-SHA512 signature
 over the raw body and refuses every callback until the webhook secret is set.
 
+## Deploying it
+
+A release is an image in ECR plus the tag an SSM parameter points at;
+`scripts/deploy-app.sh <env> <tag>` builds, pushes, moves the pointer and
+refreshes the fleet, and rollback is the same script with the previous tag.
+The dashboard ships with `scripts/deploy-dashboard.sh <env>` to a private
+bucket behind CloudFront. Health workers are provisioned with
+`manage.py provision_user`, which creates the Cognito account and the Django
+row as one act. The full procedure is `infra/README.md`.
+
+## The mentor mother channel
+
+A mentor mother with a smartphone will use the React Native client, which is
+not built and is a separately funded workstream. A mentor mother without one
+works entirely by SMS: structured messages out, keyword replies in, and her
+reply acknowledges the alert. A pilot that launches before handsets deploy
+runs `seed_programme --sms-only`, which disables the two rules that watch
+handset activity so that no supervisor learns to ignore alerts about devices
+that do not exist. The undecided middle — half a smartphone rollout — is the
+one configuration this repository refuses to make easy.
+
 ## What is not built
 
-- The React Native client for mentor mothers.
+- The React Native client for mentor mothers (see the channel section above).
 - A live Termii integration test. This is the largest remaining risk. The whole
   causal chain assumes two-way SMS is reliable on the pilot networks, and that
   assumption is currently untested against a real handset on a real carrier.
@@ -138,6 +159,9 @@ over the raw body and refuses every callback until the webhook secret is set.
   and the webhook refuses every callback while it is unset.
 - Replace every `REPLACE_AFTER_DEPLOY` value in Secrets Manager. The pilot
   settings module refuses to start while a placeholder remains.
-- Obtain the NHREC and state SHREC approvals described in Annex C. The consent
-  timestamp field exists; no code enforces that consent precedes enrolment yet,
-  and it should before go-live.
+- Supply a real alarm address (`--context alarmEmail=...`); the synth warns
+  while the placeholder survives.
+- Obtain the NHREC and state SHREC approvals described in Annex C. Consent
+  is enforced in code — no client record exists before a consent timestamp
+  and form reference, and no infant is registered under a mother without
+  consent — but the approvals themselves are a programme act.

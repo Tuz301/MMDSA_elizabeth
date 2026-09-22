@@ -10,6 +10,10 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as certificatemanager from 'aws-cdk-lib/aws-certificatemanager';
+import * as ecr from 'aws-cdk-lib/aws-ecr';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import { Construct } from 'constructs';
 import { EnvConfig } from '../config/environments';
 
@@ -131,6 +135,28 @@ export class AppStack extends cdk.Stack {
       enableTokenRevocation: true,
     });
 
+    // ---- Application image and release pointer ---------------------------
+    // The release is a two-part fact: an image in this repository, and the
+    // tag the SSM parameter points at. Deploying is pushing an image and
+    // moving the pointer; rolling back is moving the pointer back. Instances
+    // read the pointer at boot, so an instance refresh is the rollout.
+    // See infra/README.md, "Deployment".
+    const appRepository = new ecr.Repository(this, 'AppRepository', {
+      repositoryName: `mmdsa-${config.envName}`,
+      imageScanOnPush: true,
+      lifecycleRules: [{ maxImageCount: 20 }],
+      removalPolicy: isPilot ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+      emptyOnDelete: !isPilot,
+    });
+
+    const imageTagParameter = new ssm.StringParameter(this, 'AppImageTag', {
+      parameterName: `/mmdsa/${config.envName}/app-image-tag`,
+      stringValue: 'bootstrap',
+      description:
+        'Tag of the application image instances run. "bootstrap" means no ' +
+        'release has been deployed yet; instances wait rather than serve.',
+    });
+
     // ---- Instance role ---------------------------------------------------
     const instanceRole = new iam.Role(this, 'AppInstanceRole', {
       assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
@@ -199,6 +225,10 @@ export class AppStack extends cdk.Stack {
       }),
     );
 
+    // The instance pulls its release: the image from ECR, the tag from SSM.
+    appRepository.grantPull(instanceRole);
+    imageTagParameter.grantRead(instanceRole);
+
     instanceRole.addToPolicy(
       new iam.PolicyStatement({
         sid: 'CognitoUserAdministration',
@@ -221,11 +251,55 @@ export class AppStack extends cdk.Stack {
     userData.addCommands(
       'set -euo pipefail',
       'dnf update -y',
-      'dnf install -y docker amazon-cloudwatch-agent',
+      'dnf install -y docker amazon-cloudwatch-agent jq',
       'systemctl enable --now docker',
-      // The deployment pipeline replaces this placeholder with a real pull and
-      // run of the application image. See infra/README.md, "Deployment".
-      'echo "mmdsa bootstrap complete" > /var/log/mmdsa-bootstrap.log',
+      // The launch script re-reads the release pointer on every boot, so a
+      // new instance always runs the current release and an instance
+      // refresh is a deployment. "bootstrap" means no release exists yet:
+      // the instance stays up (for Session Manager) and serves nothing.
+      `cat > /usr/local/bin/mmdsa-launch <<'LAUNCH'
+#!/bin/bash
+set -euo pipefail
+REGION="${this.region}"
+TAG=$(aws ssm get-parameter --region "$REGION" \\
+  --name "/mmdsa/${config.envName}/app-image-tag" \\
+  --query Parameter.Value --output text)
+if [ "$TAG" = "bootstrap" ]; then
+  echo "No release deployed yet. See infra/README.md." > /var/log/mmdsa-bootstrap.log
+  exit 0
+fi
+IMAGE="${appRepository.repositoryUri}:$TAG"
+aws ecr get-login-password --region "$REGION" \\
+  | docker login --username AWS --password-stdin "${appRepository.repositoryUri.split('/')[0]}"
+docker pull "$IMAGE"
+
+# Runtime configuration: non-secret values inline, secrets fetched from
+# Secrets Manager at boot. The file is root-only and lives on the encrypted
+# root volume.
+ENV_FILE=/etc/mmdsa.env
+umask 077
+{
+  echo "DJANGO_SETTINGS_MODULE=config.settings.prod"
+  echo "AWS_REGION=$REGION"
+  echo "MMDSA_ENV=${config.envName}"
+  aws secretsmanager get-secret-value --region "$REGION" \\
+    --secret-id "${appSecrets.secretArn}" --query SecretString --output text \\
+    | jq -r 'to_entries[] | "\\(.key)=\\(.value)"'
+  aws secretsmanager get-secret-value --region "$REGION" \\
+    --secret-id "${databaseSecret.secretArn}" --query SecretString --output text \\
+    | jq -r '"DB_HOST=\\(.host)\\nDB_PORT=\\(.port)\\nDB_NAME=\\(.dbname)\\nDB_USER=\\(.username)\\nDB_PASSWORD=\\(.password)"'
+} > "$ENV_FILE"
+
+docker rm -f mmdsa-web mmdsa-worker mmdsa-beat 2>/dev/null || true
+docker run -d --name mmdsa-web    --restart always --env-file "$ENV_FILE" \\
+  -e CONTAINER_ROLE=web -p 8000:8000 "$IMAGE"
+docker run -d --name mmdsa-worker --restart always --env-file "$ENV_FILE" \\
+  -e CONTAINER_ROLE=worker "$IMAGE"
+docker run -d --name mmdsa-beat   --restart always --env-file "$ENV_FILE" \\
+  -e CONTAINER_ROLE=beat "$IMAGE"
+LAUNCH`,
+      'chmod 0700 /usr/local/bin/mmdsa-launch',
+      '/usr/local/bin/mmdsa-launch',
     );
 
     this.autoScalingGroup = new autoscaling.AutoScalingGroup(this, 'AppAsg', {
@@ -320,6 +394,13 @@ export class AppStack extends cdk.Stack {
       );
     }
 
+    if (isPilot && config.alarmEmail.endsWith('.example')) {
+      cdk.Annotations.of(this).addWarning(
+        'The alarm email is still the placeholder. An alarm nobody receives ' +
+        'is no alarm. Supply --context alarmEmail=... before go-live.',
+      );
+    }
+
     // ---- Web application firewall ---------------------------------------
     const webAcl = new wafv2.CfnWebACL(this, 'WebAcl', {
       name: `mmdsa-${config.envName}`,
@@ -384,7 +465,46 @@ export class AppStack extends cdk.Stack {
       webAclArn: webAcl.attrArn,
     });
 
+    // ---- Dashboard hosting -----------------------------------------------
+    // The supervisor dashboard is a static bundle. It lives in a private
+    // bucket behind CloudFront: the bucket accepts no public access and the
+    // distribution reaches it through Origin Access Control. CloudFront is
+    // global, so supervisors in Ogun and Plateau are served from the nearest
+    // edge, and the default *.cloudfront.net certificate carries HTTPS until
+    // the programme decides on a custom domain (whose certificate would have
+    // to live in us-east-1 — see lib/README-region-constraints.md).
+    const dashboardBucket = new s3.Bucket(this, 'DashboardBucket', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      removalPolicy: isPilot ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: !isPilot,
+    });
+
+    const dashboardDistribution = new cloudfront.Distribution(this, 'Dashboard', {
+      defaultBehavior: {
+        origin: origins.S3BucketOrigin.withOriginAccessControl(dashboardBucket),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+      },
+      defaultRootObject: 'index.html',
+      // A single-page application: every route is index.html's business.
+      errorResponses: [
+        { httpStatus: 403, responseHttpStatus: 200, responsePagePath: '/index.html' },
+        { httpStatus: 404, responseHttpStatus: 200, responsePagePath: '/index.html' },
+      ],
+      comment: `mmdsa-${config.envName} supervisor dashboard`,
+    });
+
     // ---- Outputs consumed by the Django settings module ------------------
+    new cdk.CfnOutput(this, 'AppRepositoryUri', { value: appRepository.repositoryUri });
+    new cdk.CfnOutput(this, 'AppImageTagParameter', {
+      value: imageTagParameter.parameterName,
+    });
+    new cdk.CfnOutput(this, 'DashboardBucketName', { value: dashboardBucket.bucketName });
+    new cdk.CfnOutput(this, 'DashboardUrl', {
+      value: `https://${dashboardDistribution.distributionDomainName}`,
+    });
     new cdk.CfnOutput(this, 'ApiUrl', {
       value: `https://${config.apiDomainName ?? this.loadBalancer.loadBalancerDnsName}`,
     });
